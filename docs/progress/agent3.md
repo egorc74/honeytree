@@ -43,6 +43,7 @@ Branch: `ccr-bdce6bfe-1odzef` (PLAN.md names `agent3/media-infra`; this session 
   table and column Agent 3 uses (run it once Agent 1's migration exists).
 
 ## Phase 4 — Production deployment: done, not yet run on a real server
+
 - `infra/docker-compose.prod.yml`: Caddy (automatic HTTPS; web on `/`, API on `/api`, `/healthz`),
   postgres 16, redis (`noeviction`, required by BullMQ), clamav, api, worker, web, backup. Only
   Caddy publishes ports. `docker-compose.minio.yml` swaps R2 for self-hosted MinIO.
