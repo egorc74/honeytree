@@ -1,0 +1,25 @@
+{
+  "name": "@honeytree/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "BullMQ worker: malware scan, image and video processing, ranking and maintenance jobs.",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@honeytree/media": "workspace:*",
+    "bullmq": "^6.3.11",
+    "ioredis": "^6.0.0",
+    "pg": "^8.23.1",
+    "sharp": "^0.35.5"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "@types/node": "^26.6.4",
+    "@types/pg": "^8.23.1"
+  }
+}

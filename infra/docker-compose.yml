@@ -69,6 +69,13 @@ services:
 
   clamav:
     image: clamav/clamav:1.4
+    environment:
+      # Builds can be up to 2 GB and are streamed to clamd (INSTREAM). The defaults (25-100 MB)
+      # would make clamd refuse them, or skip the part past the limit and call it clean.
+      CLAMD_CONF_StreamMaxLength: 2100M
+      CLAMD_CONF_MaxFileSize: 2100M
+      CLAMD_CONF_MaxScanSize: 4000M
+      CLAMD_CONF_ReadTimeout: '600'
     ports: ['3310:3310']
     volumes:
       - clamav-data:/var/lib/clamav

@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { Readable } from 'node:stream';
 import type { JobQueue, MediaQueueName } from '../queue';
 import type { BucketName, ObjectStorage, PresignedPut } from '../storage';
 
@@ -35,6 +36,11 @@ export class MemoryStorage implements ObjectStorage {
     if (!o) throw new Error(`NoSuchKey ${bucket}/${key}`);
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, o);
+  }
+  async openReadStream(bucket: BucketName, key: string) {
+    const o = this.objects.get(this.k(bucket, key));
+    if (!o) throw new Error(`NoSuchKey ${bucket}/${key}`);
+    return Readable.from([o]);
   }
   async putFile(bucket: BucketName, key: string, path: string) {
     this.objects.set(this.k(bucket, key), await readFile(path));

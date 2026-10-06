@@ -1,4 +1,4 @@
-import { Queue } from 'bullmq';
+import { Queue, type JobsOptions } from 'bullmq';
 import { Redis } from 'ioredis';
 import type { MediaKind } from './limits';
 
@@ -41,12 +41,15 @@ export function createRedisConnection(url: string) {
 export class BullJobQueue implements JobQueue {
   private readonly queues = new Map<string, Queue>();
 
-  constructor(private readonly connection: Redis) {}
+  constructor(
+    private readonly connection: Redis,
+    private readonly jobOptions: JobsOptions = DEFAULT_JOB_OPTIONS,
+  ) {}
 
   private queue(name: string) {
     let q = this.queues.get(name);
     if (!q) {
-      q = new Queue(name, { connection: this.connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
+      q = new Queue(name, { connection: this.connection, defaultJobOptions: this.jobOptions });
       this.queues.set(name, q);
     }
     return q;

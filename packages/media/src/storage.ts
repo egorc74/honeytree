@@ -25,6 +25,8 @@ export interface ObjectStorage {
   /** Reads bytes `start..end` inclusive. */
   getRange(bucket: BucketName, key: string, start: number, end: number): Promise<Uint8Array>;
   downloadToFile(bucket: BucketName, key: string, path: string): Promise<void>;
+  /** Streams the whole object, for example to the virus scanner. */
+  openReadStream(bucket: BucketName, key: string): Promise<Readable>;
   putFile(
     bucket: BucketName,
     key: string,
@@ -121,6 +123,13 @@ export class S3Storage implements ObjectStorage {
       new GetObjectCommand({ Bucket: this.bucketName(bucket), Key: key }),
     );
     await pipeline(res.Body as Readable, createWriteStream(path));
+  }
+
+  async openReadStream(bucket: BucketName, key: string) {
+    const res = await this.client.send(
+      new GetObjectCommand({ Bucket: this.bucketName(bucket), Key: key }),
+    );
+    return res.Body as Readable;
   }
 
   async putFile(
