@@ -1,0 +1,138 @@
+# Local development stack. Start the backing services with `pnpm infra:up` (or `make infra`)
+# and run the apps on the host with `pnpm dev`. To run everything in containers use
+# `pnpm dev:docker` (adds the "apps" profile).
+name: honeytree
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-honeytree}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-honeytree}
+      POSTGRES_DB: ${POSTGRES_DB:-honeytree}
+    ports: ['5432:5432']
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/init.sh:/docker-entrypoint-initdb.d/init.sh:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ['redis-server', '--appendonly', 'yes']
+    ports: ['6379:6379']
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    command: ['server', '/data', '--console-address', ':9001']
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-honeytree}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-honeytree-secret}
+      # Browsers upload straight to storage with presigned PUT URLs.
+      MINIO_API_CORS_ALLOW_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
+    ports: ['9000:9000', '9001:9001']
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # One-shot job: creates the buckets, then exits.
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-honeytree}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-honeytree-secret}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-honeytree}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-honeytree-secret}
+      S3_BUCKET_PRIVATE: ${S3_BUCKET_PRIVATE:-honeytree-private}
+      S3_BUCKET_PUBLIC: ${S3_BUCKET_PUBLIC:-honeytree-public}
+    entrypoint: ['/bin/sh', '/minio-init.sh']
+    volumes:
+      - ./minio-init.sh:/minio-init.sh:ro
+    restart: 'no'
+
+  clamav:
+    image: clamav/clamav:1.4
+    ports: ['3310:3310']
+    volumes:
+      - clamav-data:/var/lib/clamav
+    healthcheck:
+      test: ['CMD', '/usr/local/bin/clamdcheck.sh']
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 120s # the first start downloads the virus database
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports: ['1025:1025', '8025:8025']
+
+  # ---- Application services (profile "apps") ----
+  api:
+    profiles: [apps]
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile
+      target: api
+    env_file: [{ path: ../.env, required: false }]
+    environment: &app-env
+      NODE_ENV: development
+      DATABASE_URL: postgresql://${POSTGRES_USER:-honeytree}:${POSTGRES_PASSWORD:-honeytree}@postgres:5432/${POSTGRES_DB:-honeytree}
+      REDIS_URL: redis://redis:6379
+      S3_ENDPOINT: http://minio:9000
+      # Presigned URLs are opened by the browser, so they must use the host-reachable address.
+      S3_PUBLIC_ENDPOINT: http://localhost:9000
+      CLAMAV_HOST: clamav
+      SMTP_HOST: mailpit
+    ports: ['${API_PORT:-4000}:4000']
+    depends_on: &app-deps
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      minio-init: { condition: service_completed_successfully }
+
+  worker:
+    profiles: [apps]
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile
+      target: worker
+    env_file: [{ path: ../.env, required: false }]
+    environment: *app-env
+    depends_on:
+      <<: *app-deps
+      clamav: { condition: service_healthy }
+
+  web:
+    profiles: [apps]
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile
+      target: web
+    env_file: [{ path: ../.env, required: false }]
+    environment:
+      NODE_ENV: development
+    ports: ['${WEB_PORT:-3000}:3000']
+    depends_on:
+      - api
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:
+  clamav-data:
