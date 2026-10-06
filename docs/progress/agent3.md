@@ -42,7 +42,26 @@ Branch: `ccr-bdce6bfe-1odzef` (PLAN.md names `agent3/media-infra`; this session 
 - `pnpm --filter @honeytree/worker check:schema` verifies that Agent 1's real database has every
   table and column Agent 3 uses (run it once Agent 1's migration exists).
 
-## Phase 4 — Production deployment: not started
+## Phase 4 — Production deployment: done, not yet run on a real server
+- `infra/docker-compose.prod.yml`: Caddy (automatic HTTPS; web on `/`, API on `/api`, `/healthz`),
+  postgres 16, redis (`noeviction`, required by BullMQ), clamav, api, worker, web, backup. Only
+  Caddy publishes ports. `docker-compose.minio.yml` swaps R2 for self-hosted MinIO.
+- `infra/DEPLOY.md`: VPS sizing (4 vCPU / 8 GB), firewall, non-root `deploy` user, Docker install,
+  DNS, R2 setup incl. the CORS policy browser uploads need, first deploy, updates, rollback,
+  monitoring, backups, disaster restore.
+- Storage by env vars only (`S3_*`); `.env.production.example` documents R2 and MinIO.
+- Backups: nightly `pg_dump` to a private bucket, 14-day retention (never below 3 kept), weekly
+  automatic restore test into a scratch database. The scripts were run for real against PostgreSQL 16
+  (dump, restore, retention, min-keep guard, abort paths); only the S3 transfer path is untested.
+- `infra/scripts/deploy.sh`: pull -> build -> backup -> migrate -> restart api (wait healthy) ->
+  restart rest -> smoke test, automatic fallback to the previous images, `--rollback`, `--dry-run`.
+  Checked with `--dry-run` only.
+- Log rotation (json-file 10m x 5), `infra/scripts/healthcheck.sh` for cron/heartbeat monitoring,
+  optional Uptime Kuma profile, Sentry in the worker (`SENTRY_DSN`).
+- Not verifiable in the sandbox (no Docker daemon, no Caddy, no object store): Caddyfile syntax,
+  image builds, real R2/MinIO and ClamAV. `docker compose config` accepts all compose files.
+- Needs from the other agents: `/healthz` on the API; `start` scripts on `@honeytree/api` and
+  `@honeytree/web`; Prisma migrate command in `MIGRATE_COMMAND`; `trustProxy: true` on the API.
 
 ## Verification
 

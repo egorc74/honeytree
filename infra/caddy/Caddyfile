@@ -1,0 +1,48 @@
+# Reverse proxy with automatic HTTPS (Let's Encrypt). Web on /, API on /api.
+{
+	email {$ACME_EMAIL}
+}
+
+{$SITE_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "SAMEORIGIN"
+		-Server
+	}
+
+	# API. Uploads go straight to object storage, so API bodies stay small.
+	handle /api/* {
+		request_body {
+			max_size 2MB
+		}
+		reverse_proxy api:4000 {
+			# Wait for the API to come back during a deploy instead of returning 502.
+			lb_try_duration 15s
+			lb_try_interval 250ms
+			header_up X-Forwarded-For {remote_host}
+		}
+	}
+
+	handle /healthz {
+		reverse_proxy api:4000
+	}
+
+	handle {
+		reverse_proxy web:3000 {
+			lb_try_duration 15s
+			lb_try_interval 250ms
+		}
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}
+
+# Extra sites, for example media.<domain> in front of MinIO (see docker-compose.minio.yml).
+import /etc/caddy/extra/*.caddy

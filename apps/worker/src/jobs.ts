@@ -7,6 +7,7 @@ import { recheckCounters, type CounterMode } from './processors/counters';
 import { computeScores } from './processors/scores';
 import { processImage } from './processors/image';
 import { scanMedia } from './processors/scan';
+import { captureError } from './sentry';
 import { processVideo } from './processors/video';
 
 /** Names of the repeatable jobs on the `maintenance` queue. */
@@ -36,7 +37,8 @@ export async function scheduleMaintenance(queue: Queue): Promise<void> {
     { every: 60 * 60 * 1000 },
     { name: MAINTENANCE_JOBS.cleanupMedia },
   );
-  // Plan: game_scores is recomputed every 5 minutes; counters are re-checked nightly (03:00 UTC).
+  // Plan: game_scores is recomputed every 5 minutes (the first run starts right away, so the
+  // feed never waits for its first scores); counters are re-checked nightly (03:00 UTC).
   await queue.upsertJobScheduler(
     MAINTENANCE_JOBS.computeScores,
     { every: 5 * 60 * 1000 },
@@ -46,12 +48,6 @@ export async function scheduleMaintenance(queue: Queue): Promise<void> {
     MAINTENANCE_JOBS.recheckCounters,
     { pattern: '0 3 * * *', tz: 'UTC' },
     { name: MAINTENANCE_JOBS.recheckCounters },
-  );
-  // Do not make the feed wait up to 5 minutes for its first scores after a (re)start.
-  await queue.add(
-    MAINTENANCE_JOBS.computeScores,
-    {},
-    { jobId: 'compute-scores-on-boot', removeOnComplete: true },
   );
 }
 
@@ -80,7 +76,16 @@ export function startWorkers(ctx: WorkerContext, connection: Redis): StartedWork
     }),
   ];
   for (const w of workers) {
-    w.on('error', (err) => ctx.log.error('worker error', { queue: w.name, error: String(err) }));
+    w.on('error', (err) => {
+      ctx.log.error('worker error', { queue: w.name, error: String(err) });
+      captureError(err, { queue: w.name });
+    });
+    if (w.name === QUEUES.maintenance) {
+      w.on('failed', (job, err) => {
+        ctx.log.error('maintenance job failed', { job: job?.name, error: err.message });
+        captureError(err, { job: job?.name });
+      });
+    }
   }
   return { close: async () => void (await Promise.all(workers.map((w) => w.close()))) };
 }
@@ -96,6 +101,7 @@ async function onFailed(ctx: WorkerContext, job: Job<MediaJobData> | undefined, 
     error: err.message,
   });
   if (job.attemptsMade >= attempts) {
+    captureError(err, { queue: job.queueName, mediaId: job.data.mediaId });
     try {
       await rejectMedia(
         ctx.db,

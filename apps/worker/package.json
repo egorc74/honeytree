@@ -14,6 +14,7 @@
   "dependencies": {
     "@honeytree/media": "workspace:*",
     "@honeytree/ranking": "workspace:*",
+    "@sentry/node": "^11.4.0",
     "bullmq": "^6.3.11",
     "ioredis": "^6.0.0",
     "pg": "^8.23.1",

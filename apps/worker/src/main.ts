@@ -14,8 +14,10 @@ import { ClamavScanner } from './clamav';
 import type { WorkerContext } from './context';
 import { scheduleMaintenance, startWorkers } from './jobs';
 import { logger } from './log';
+import { captureError, flushSentry, initSentry } from './sentry';
 
 async function main() {
+  initSentry();
   const config = loadMediaConfig();
   const pool = new Pool({ connectionString: config.databaseUrl, max: 10 });
   const connection = createRedisConnection(config.redisUrl);
@@ -44,12 +46,20 @@ async function main() {
     await ctx.queue.close();
     await connection.quit();
     await pool.end();
+    await flushSentry();
     process.exit(0);
   };
   for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => void shutdown(signal));
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   logger.error('worker crashed on startup', { error: String(err) });
+  captureError(err);
+  await flushSentry();
   process.exit(1);
+});
+
+process.on('unhandledRejection', (err) => {
+  logger.error('unhandled rejection', { error: String(err) });
+  captureError(err);
 });
