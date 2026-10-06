@@ -391,11 +391,11 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
   /comments/{id}/like:
     put:
-      summary: Like a comment (idempotent)
+      summary: Like a comment (idempotent). Liking your own comment is 403 `SELF_ACTION`.
       tags: [Social]
       security: [{ cookieAuth: [] }]
       parameters: [{ $ref: '#/components/parameters/Id' }]
-      responses: { '200': { $ref: '#/components/responses/LikeResult' } }
+      responses: { '200': { $ref: '#/components/responses/LikeResult' }, '403': { $ref: '#/components/responses/Forbidden' } }
     delete:
       summary: Remove a comment like (idempotent)
       tags: [Social]

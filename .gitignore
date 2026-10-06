@@ -3,3 +3,4 @@ dist/
 .env
 *.log
 apps/api/src/generated/
+dump.rdb
