@@ -10,13 +10,16 @@ import { keys } from "@/lib/api/keys";
 import type { Comment, CommentKind, GameDetail } from "@/lib/api/types";
 import { timeAgo } from "@/lib/format";
 import { useAuth } from "../AuthProvider";
-import { Badge, Button, EmptyState, HexAvatar, LikeButton, RowSkeleton, TextArea, cx, useToast } from "../ui";
+import { Badge, Button, EmptyState, HexAvatar, LikeButton, RowSkeleton, Segmented, TextArea, cx, useToast } from "../ui";
 import { ReportButton } from "./ReportButton";
 
 export function Comments({ game }: { game: GameDetail }) {
+  const [kind, setKind] = useState<"all" | CommentKind>("all");
+  const [sort, setSort] = useState<"top" | "new">("top");
   const list = useInfiniteQuery({
-    queryKey: keys.comments(game.id),
-    queryFn: ({ pageParam }) => commentsApi.list(game.id, { cursor: pageParam }),
+    // Prefixed by keys.comments(gameId) so a single invalidation refreshes every filter combination.
+    queryKey: [...keys.comments(game.id), kind, sort],
+    queryFn: ({ pageParam }) => commentsApi.list(game.id, { cursor: pageParam, kind, sort }),
     initialPageParam: null as string | null,
     getNextPageParam: (l) => l.nextCursor,
   });
@@ -28,6 +31,27 @@ export function Comments({ game }: { game: GameDetail }) {
         Comments <span className="text-lg font-normal text-muted">({game.commentsCount})</span>
       </h2>
       <Composer game={game} />
+      <div className="flex flex-wrap items-center gap-3" role="group" aria-label="Filter and sort comments">
+        <Segmented
+          label="Show"
+          value={kind}
+          onChange={setKind}
+          items={[
+            { value: "all", label: "All" },
+            { value: "comment", label: "Comments" },
+            { value: "suggestion", label: "💡 Suggestions" },
+          ]}
+        />
+        <Segmented
+          label="Sort"
+          value={sort}
+          onChange={setSort}
+          items={[
+            { value: "top", label: "Top" },
+            { value: "new", label: "Newest" },
+          ]}
+        />
+      </div>
       {list.isLoading ? (
         <RowSkeleton />
       ) : items.length === 0 ? (
@@ -38,7 +62,7 @@ export function Comments({ game }: { game: GameDetail }) {
             <li key={c.id}>
               <CommentItem comment={c} game={game} />
               {!!c.replies?.length && (
-                <ul className="mt-3 space-y-3 border-l-2 border-line pl-4 sm:ml-10" aria-label={`Replies to ${c.user.displayName}`}>
+                <ul className="mt-3 space-y-3 border-l-2 border-line pl-4 sm:ml-10" aria-label={`Replies to ${c.user?.displayName ?? "a deleted comment"}`}>
                   {c.replies.map((r) => (
                     <li key={r.id}>
                       <CommentItem comment={r} game={game} isReply />
@@ -136,8 +160,10 @@ function CommentItem({ comment, game, isReply = false }: { comment: Comment; gam
   const reply = useComposer(game, comment.id, () => setReplying(false));
 
   const isOwner = me?.id === game.owner.id;
-  const mine = me?.id === comment.user.id;
-  const deleted = !!comment.deletedAt;
+  const mine = !!me && me.id === comment.user?.id;
+  const deleted = comment.deleted;
+  const canDelete = mine || isOwner || me?.role === "admin";
+  const author = comment.user;
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: keys.comments(game.id) });
     void qc.invalidateQueries({ queryKey: keys.game(game.slug) });
@@ -151,6 +177,7 @@ function CommentItem({ comment, game, isReply = false }: { comment: Comment; gam
     },
     onError: (e) => toast(e instanceof Error ? e.message : "Could not accept.", "error"),
   });
+  const unaccept = useMutation({ mutationFn: () => commentsApi.unaccept(comment.id), onSuccess: refresh });
   const remove = useMutation({ mutationFn: () => commentsApi.remove(comment.id), onSuccess: refresh });
 
   return (
@@ -161,13 +188,17 @@ function CommentItem({ comment, game, isReply = false }: { comment: Comment; gam
         comment.acceptedAt ? "border-success bg-success-bg" : "border-line bg-raised",
       )}
     >
-      <HexAvatar src={comment.user.avatarUrl} name={comment.user.displayName} size={isReply ? "sm" : "md"} />
+      <HexAvatar src={author?.avatarUrl} name={author?.displayName ?? "Deleted user"} size={isReply ? "sm" : "md"} />
       <div className="min-w-0 flex-1 space-y-1.5">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <Link href={`/u/${comment.user.username}`} className="font-heading font-semibold hover:underline">
-            {comment.user.displayName}
-          </Link>
-          {comment.user.id === game.owner.id && <Badge tone="honey">Creator</Badge>}
+          {author ? (
+            <Link href={`/u/${author.username}`} className="font-heading font-semibold hover:underline">
+              {author.displayName}
+            </Link>
+          ) : (
+            <span className="font-heading font-semibold text-muted">Deleted user</span>
+          )}
+          {author?.id === game.owner.id && <Badge tone="honey">Creator</Badge>}
           {comment.kind === "suggestion" && <Badge tone="honey">💡 Suggestion</Badge>}
           {comment.acceptedAt && <Badge tone="success">✅ Accepted</Badge>}
           <span className="text-sm text-muted">{timeAgo(comment.createdAt)}</span>
@@ -177,7 +208,15 @@ function CommentItem({ comment, game, isReply = false }: { comment: Comment; gam
 
         {!deleted && (
           <div className="flex flex-wrap items-center gap-3 pt-1">
-            <LikeButton size="sm" label="comment" liked={comment.likedByMe} count={comment.likesCount} onToggle={() => toggleLike(comment)} />
+            <LikeButton
+              size="sm"
+              label="comment"
+              liked={comment.likedByMe}
+              count={comment.likesCount}
+              onToggle={() => toggleLike(comment)}
+              disabled={mine}
+              title={mine ? "You can’t like your own comment" : undefined}
+            />
             {!isReply && (
               <button type="button" className="text-sm font-medium text-link underline" aria-expanded={replying} onClick={() => requireAuth(() => setReplying((r) => !r))}>
                 Reply
@@ -188,7 +227,12 @@ function CommentItem({ comment, game, isReply = false }: { comment: Comment; gam
                 ✅ Accept suggestion
               </Button>
             )}
-            {mine && (
+            {isOwner && comment.kind === "suggestion" && comment.acceptedAt && (
+              <button type="button" className="text-sm text-muted underline" onClick={() => unaccept.mutate()}>
+                Undo accept
+              </button>
+            )}
+            {canDelete && (
               <button type="button" className="text-sm text-danger underline" onClick={() => remove.mutate()}>
                 Delete
               </button>
@@ -198,7 +242,7 @@ function CommentItem({ comment, game, isReply = false }: { comment: Comment; gam
         )}
 
         {replying && (
-          <form onSubmit={reply.submit} className="mt-2 space-y-2" aria-label={`Reply to ${comment.user.displayName}`}>
+          <form onSubmit={reply.submit} className="mt-2 space-y-2" aria-label={`Reply to ${author?.displayName ?? "comment"}`}>
             <TextArea label="Your reply" value={reply.body} onChange={(e) => reply.setBody(e.target.value)} maxLength={2000} error={reply.error} autoFocus />
             <div className="flex gap-2">
               <Button type="submit" size="sm" loading={reply.pending}>

@@ -52,7 +52,7 @@ function SearchBarInner({ className }: { className?: string }) {
   const options = useMemo<Option[]>(() => {
     if (debounced.length < 2) return [];
     const list: Option[] = [];
-    data?.games.forEach((g) => list.push({ id: `g-${g.id}`, kind: "game", label: g.title, sub: g.tags.slice(0, 2).map((t) => `#${t}`).join(" "), img: g.cover?.thumb, href: `/games/${g.slug}` }));
+    data?.games.forEach((g) => list.push({ id: `g-${g.id}`, kind: "game", label: g.title, img: g.coverUrl, href: `/games/${g.slug}` }));
     data?.users.forEach((u) => list.push({ id: `u-${u.id}`, kind: "user", label: u.displayName, sub: `@${u.username}`, img: u.avatarUrl, href: `/u/${u.username}` }));
     list.push({ id: "all", kind: "all", label: `See all results for “${debounced}”`, href: `/search?q=${encodeURIComponent(debounced)}` });
     return list;

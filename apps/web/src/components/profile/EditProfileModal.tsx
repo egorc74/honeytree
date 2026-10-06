@@ -4,35 +4,28 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { users } from "@/lib/api/endpoints";
 import { keys } from "@/lib/api/keys";
-import type { User, UserLinks } from "@/lib/api/types";
+import type { Me, UserLink } from "@/lib/api/types";
 import { uploadErrorMessage, uploadMedia, validateFile } from "@/lib/upload";
 import { Button, HexAvatar, Modal, TextArea, TextField, useToast } from "../ui";
 
-const LINK_FIELDS: { key: keyof UserLinks; label: string; placeholder: string }[] = [
-  { key: "website", label: "Website", placeholder: "https://…" },
-  { key: "github", label: "GitHub", placeholder: "https://github.com/…" },
-  { key: "itch", label: "itch.io", placeholder: "https://….itch.io" },
-  { key: "twitter", label: "X / Twitter", placeholder: "https://x.com/…" },
-  { key: "discord", label: "Discord", placeholder: "Invite link or username" },
-];
+const MAX_LINKS = 5;
 
-export function EditProfileModal({ user, open, onClose }: { user: User; open: boolean; onClose: () => void }) {
+export function EditProfileModal({ user, bio: bioInitial, links: initialLinks, open, onClose }: { user: Me; bio: string; links: UserLink[]; open: boolean; onClose: () => void }) {
   const qc = useQueryClient();
   const { toast } = useToast();
   const [displayName, setDisplayName] = useState(user.displayName);
-  const [bio, setBio] = useState(user.bio);
-  const [links, setLinks] = useState<UserLinks>(user.links ?? {});
+  const [bio, setBio] = useState(bioInitial);
+  const [links, setLinks] = useState<UserLink[]>(initialLinks);
   const [avatarMediaId, setAvatarMediaId] = useState<string | undefined>();
   const [avatarPreview, setAvatarPreview] = useState<string | null>(user.avatarUrl);
   const [avatarBusy, setAvatarBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const save = useMutation({
-    mutationFn: () => users.update({ displayName: displayName.trim(), bio, links, avatarMediaId }),
+    mutationFn: () => users.update({ displayName: displayName.trim(), bio, links: links.filter((l) => l.label.trim() && l.url.trim()), avatarMediaId }),
     onSuccess: (updated) => {
       toast("Profile saved.", "success");
-      qc.setQueryData(keys.me, updated);
-      void qc.invalidateQueries({ queryKey: keys.profile(user.username) });
+      qc.setQueryData(keys.me, (me: Me | null | undefined) => (me ? { ...me, displayName: updated.displayName, avatarUrl: updated.avatarUrl } : me));
       void qc.invalidateQueries();
       onClose();
     },
@@ -84,10 +77,21 @@ export function EditProfileModal({ user, open, onClose }: { user: User; open: bo
         <TextField label="Display name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} maxLength={40} required />
         <TextArea label="Bio" value={bio} onChange={(e) => setBio(e.target.value)} maxLength={500} counter={`${bio.length}/500`} />
         <fieldset className="space-y-3">
-          <legend className="mb-1 font-heading text-sm font-medium">Links</legend>
-          {LINK_FIELDS.map((f) => (
-            <TextField key={f.key} label={f.label} placeholder={f.placeholder} value={links[f.key] ?? ""} onChange={(e) => setLinks({ ...links, [f.key]: e.target.value })} />
+          <legend className="mb-1 font-heading text-sm font-medium">Links (up to {MAX_LINKS})</legend>
+          {links.map((l, i) => (
+            <div key={i} className="grid grid-cols-[1fr_2fr_auto] items-end gap-2">
+              <TextField label="Label" value={l.label} maxLength={30} placeholder="Website" onChange={(e) => setLinks(links.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))} />
+              <TextField label="URL" type="url" value={l.url} placeholder="https://…" onChange={(e) => setLinks(links.map((x, j) => (j === i ? { ...x, url: e.target.value } : x)))} />
+              <Button variant="ghost" size="sm" onClick={() => setLinks(links.filter((_, j) => j !== i))} aria-label={`Remove link ${i + 1}`}>
+                ✕
+              </Button>
+            </div>
           ))}
+          {links.length < MAX_LINKS && (
+            <Button variant="secondary" size="sm" onClick={() => setLinks([...links, { label: "", url: "" }])}>
+              + Add link
+            </Button>
+          )}
         </fieldset>
         {error && (
           <p role="alert" className="rounded-md bg-danger-bg px-3 py-2 text-sm text-danger">

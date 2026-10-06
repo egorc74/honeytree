@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { auth } from "@/lib/api/endpoints";
 import { ApiError } from "@/lib/api/client";
-import type { User } from "@/lib/api/types";
+import type { Me } from "@/lib/api/types";
 import { Button, TextField } from "./ui";
 
 const MOCKING = process.env.NEXT_PUBLIC_API_MOCKING === "enabled";
@@ -15,7 +15,7 @@ export function AuthForm({
 }: {
   mode: "login" | "register";
   onModeChange?: (m: "login" | "register") => void;
-  onSuccess: (user: User) => void | Promise<void>;
+  onSuccess: (user: Me) => void | Promise<void>;
 }) {
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
@@ -29,7 +29,7 @@ export function AuthForm({
     setBusy(true);
     try {
       const { user } =
-        mode === "login" ? await auth.login({ email, password }) : await auth.register({ username, email, password });
+        mode === "login" ? await auth.login({ identifier: email.trim(), password }) : await auth.register({ username: username.trim().toLowerCase(), email: email.trim(), password });
       await onSuccess(user);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not reach the server. Please try again.");
@@ -49,8 +49,9 @@ export function AuthForm({
           minLength={3}
           maxLength={24}
           value={username}
-          onChange={(e) => setUsername(e.target.value)}
-          hint="3–24 letters, numbers or underscores."
+          onChange={(e) => setUsername(e.target.value.toLowerCase())}
+          pattern="[a-z0-9_]{3,24}"
+          hint="3–24 lowercase letters, numbers or underscores."
         />
       )}
       <TextField

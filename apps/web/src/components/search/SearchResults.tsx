@@ -1,6 +1,6 @@
 "use client";
 
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { LoadMore } from "@/hooks/useInfinite";
@@ -34,7 +34,8 @@ export function SearchResults() {
     queryFn: ({ pageParam }) => search.games(q, tags, pageParam),
     initialPageParam: null as string | null,
     getNextPageParam: (l) => l.nextCursor,
-    enabled: tab === "games",
+    // The API requires a query string; without one we show a prompt instead.
+    enabled: tab === "games" && q.length > 0,
   });
   const creators = useInfiniteQuery({
     queryKey: keys.searchUsers(q),
@@ -46,12 +47,12 @@ export function SearchResults() {
 
   const gameItems = games.data?.pages.flatMap((p) => p.items) ?? [];
   const userItems = creators.data?.pages.flatMap((p) => p.items) ?? [];
-  const facets = games.data?.pages[0]?.facets?.tags.map((t) => t.tag) ?? FALLBACK_TAGS;
-  const tagOptions = [...new Set([...tags, ...facets])].slice(0, 14);
+  const popular = useQuery({ queryKey: ["tags", "popular"], queryFn: search.popularTags, staleTime: 5 * 60_000 });
+  const tagOptions = [...new Set([...tags, ...(popular.data?.map((t) => t.tag) ?? FALLBACK_TAGS)])].slice(0, 14);
 
   return (
     <div className="space-y-6">
-      <h1 className="font-heading text-3xl font-semibold">{q ? <>Results for “{q}”</> : "Browse games"}</h1>
+      <h1 className="font-heading text-3xl font-semibold">{q ? <>Results for “{q}”</> : "Search"}</h1>
       <Tabs
         idPrefix="search"
         label="Search results"
@@ -90,7 +91,9 @@ export function SearchResults() {
             )}
           </div>
 
-          {games.isLoading ? (
+          {!q ? (
+            <EmptyState title="Search for games" description="Type a title or a tag in the search bar above." emoji="🔍" />
+          ) : games.isLoading ? (
             <GameGridSkeleton count={6} />
           ) : games.isError ? (
             <ErrorState onRetry={() => games.refetch()} />
@@ -134,7 +137,7 @@ export function SearchResults() {
                     <span className="min-w-0">
                       <span className="block truncate font-heading text-lg font-semibold">{u.displayName}</span>
                       <span className="block text-sm text-muted">@{u.username}</span>
-                      {u.gamesCount !== undefined && <span className="text-sm text-muted">{plural(u.gamesCount, "game")}</span>}
+                      {u.stats && <span className="text-sm text-muted">{plural(u.stats.gamesCount, "game")}</span>}
                     </span>
                   </Link>
                 </li>

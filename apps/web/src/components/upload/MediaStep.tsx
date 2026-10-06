@@ -5,7 +5,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { uploads } from "@/lib/api/endpoints";
 import { keys } from "@/lib/api/keys";
-import type { GameDetail, MediaItem } from "@/lib/api/types";
+import type { GameDetail, Media } from "@/lib/api/types";
 import { UPLOAD_LIMITS } from "@/lib/upload";
 import { Button, cx } from "../ui";
 import { FileDrop } from "./FileDrop";
@@ -32,7 +32,7 @@ export function MediaStep({
   const shots = game.screenshots;
 
   const reorder = useMutation({
-    mutationFn: (order: string[]) => uploads.reorder(game.id, { kind: "screenshot", order }),
+    mutationFn: (order: string[]) => uploads.reorder(game.id, order),
     onMutate: (order) => {
       // Optimistic: reflect the new order immediately.
       qc.setQueryData<GameDetail>(keys.game(game.slug), (g) =>
@@ -50,7 +50,7 @@ export function MediaStep({
     reorder.mutate(ids);
   }
 
-  const cover = game.coverMedia;
+  const cover = game.cover;
   const video = game.video;
 
   return (
@@ -142,7 +142,7 @@ export function MediaStep({
   );
 }
 
-function Thumb({ item, alt, empty }: { item: MediaItem | null; alt: string; empty: string }) {
+function Thumb({ item, alt, empty }: { item: Media | null; alt: string; empty: string }) {
   const src = item?.status === "ready" ? (item.variants.thumb ?? item.variants.card) : undefined;
   return (
     <div className="grid aspect-video w-full place-items-center overflow-hidden rounded-md bg-surface text-sm text-muted">

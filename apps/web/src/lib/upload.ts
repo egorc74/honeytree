@@ -3,11 +3,11 @@ import { uploads } from "./api/endpoints";
 import type { MediaKind, MediaStatus, UploadInit } from "./api/types";
 
 export const UPLOAD_LIMITS: Record<string, { max: number; label: string; accept: string }> = {
-  build: { max: 2 * 1024 ** 3, label: "2 GB", accept: ".zip,.exe,.dmg,.apk,.appimage,.tar.gz,.tgz" },
-  video: { max: 300 * 1024 ** 2, label: "300 MB", accept: "video/*" },
-  screenshot: { max: 10 * 1024 ** 2, label: "10 MB", accept: "image/*" },
-  cover: { max: 10 * 1024 ** 2, label: "10 MB", accept: "image/*" },
-  avatar: { max: 10 * 1024 ** 2, label: "10 MB", accept: "image/*" },
+  build: { max: 2 * 1024 ** 3, label: "2 GB", accept: ".zip,.exe,.dmg,.apk,.AppImage,.tar.gz,.tgz" },
+  video: { max: 300 * 1024 ** 2, label: "300 MB", accept: ".mp4,.mov,.webm,video/*" },
+  screenshot: { max: 10 * 1024 ** 2, label: "10 MB", accept: ".png,.jpg,.jpeg,.webp,.gif,image/*" },
+  cover: { max: 10 * 1024 ** 2, label: "10 MB", accept: ".png,.jpg,.jpeg,.webp,.gif,image/*" },
+  avatar: { max: 10 * 1024 ** 2, label: "10 MB", accept: ".png,.jpg,.jpeg,.webp,.gif,image/*" },
 };
 
 /** Client-side pre-check; the API validates again (and checks magic bytes after upload). */
@@ -30,20 +30,22 @@ export interface UploadProgress {
   reason?: string;
 }
 
-/** Direct-to-storage upload with progress. XHR is used because fetch cannot report upload progress. */
-function postToStorage(init: UploadInit, file: File, onProgress: (f: number) => void, signal?: AbortSignal): Promise<void> {
+/**
+ * Direct-to-storage upload with progress: a presigned PUT of the raw file (R2 has no presigned POST).
+ * XHR is used because fetch cannot report upload progress. No cookies and no extra headers: they
+ * would break the signature.
+ */
+function putToStorage(init: UploadInit, file: File, onProgress: (f: number) => void, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    const form = new FormData();
-    for (const [k, v] of Object.entries(init.fields)) form.append(k, v);
-    form.append("file", file); // must be the last field for S3 presigned POST
-    xhr.open("POST", init.url);
+    xhr.open(init.method ?? "PUT", init.url);
+    for (const [k, v] of Object.entries(init.headers ?? {})) xhr.setRequestHeader(k, v);
     xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
     xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`Upload failed (${xhr.status})`)));
     xhr.onerror = () => reject(new Error("Network error during upload"));
     xhr.onabort = () => reject(new DOMException("Aborted", "AbortError"));
     signal?.addEventListener("abort", () => xhr.abort());
-    xhr.send(form);
+    xhr.send(file);
   });
 }
 
@@ -57,7 +59,7 @@ const sleep = (ms: number, signal?: AbortSignal) =>
   });
 
 /**
- * Whole pipeline: request a presigned URL → upload with progress → mark complete →
+ * Whole pipeline: request a presigned URL → PUT with progress → mark complete →
  * poll status (scanning → processing → ready / rejected).
  */
 export async function uploadMedia(opts: {
@@ -73,18 +75,19 @@ export async function uploadMedia(opts: {
 
   report({ phase: "uploading", fraction: 0 });
   const init = gameId ? await uploads.init(gameId, body) : await uploads.initAvatar(body);
-  await postToStorage(init, file, (f) => report({ phase: "uploading", fraction: f, mediaId: init.mediaId }), signal);
+  const mediaId = init.media?.id ?? init.uploadId;
+  await putToStorage(init, file, (f) => report({ phase: "uploading", fraction: f, mediaId }), signal);
 
-  let status = await uploads.complete(init.uploadId);
-  report({ phase: status.status, fraction: 1, mediaId: status.mediaId });
+  let media = await uploads.complete(init.uploadId);
+  report({ phase: media.status, fraction: 1, mediaId });
   const started = Date.now();
-  while (status.status !== "ready" && status.status !== "rejected") {
+  while (media.status !== "ready" && media.status !== "rejected") {
     if (Date.now() - started > 15 * 60_000) throw new Error("Processing is taking too long. Check back later.");
-    await sleep(800, signal);
-    status = await uploads.status(init.uploadId);
-    report({ phase: status.status, fraction: 1, mediaId: status.mediaId, reason: status.reason });
+    await sleep(1200, signal);
+    media = await uploads.status(init.uploadId);
+    report({ phase: media.status, fraction: 1, mediaId, reason: media.rejectReason ?? undefined });
   }
-  return { mediaId: status.mediaId, status: status.status, reason: status.reason };
+  return { mediaId: media.id, status: media.status, reason: media.rejectReason ?? undefined };
 }
 
 export function uploadErrorMessage(e: unknown): string {

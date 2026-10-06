@@ -16,6 +16,8 @@ export function LikeButton({
   label,
   size = "md",
   pending,
+  disabled,
+  title,
   className,
 }: {
   liked: boolean;
@@ -25,6 +27,9 @@ export function LikeButton({
   label: string;
   size?: "sm" | "md" | "lg";
   pending?: boolean;
+  /** e.g. your own content: the API answers 403 SELF_ACTION */
+  disabled?: boolean;
+  title?: string;
   className?: string;
 }) {
   const [buzz, setBuzz] = useState(false);
@@ -51,11 +56,13 @@ export function LikeButton({
       aria-label={`${liked ? "Unlike" : "Like"} this ${label}, ${count} ${count === 1 ? "like" : "likes"}`}
       data-testid="like-button"
       data-liked={liked}
-      disabled={pending}
+      disabled={pending || disabled}
+      title={title}
       className={cx(
         "inline-flex items-center rounded-pill border-2 font-heading font-medium transition-colors",
         dims,
         liked ? "border-transparent bg-primary text-primary-fg" : "border-line bg-raised text-fg hover:border-primary",
+        disabled && "cursor-not-allowed opacity-60 hover:border-line",
         className,
       )}
     >

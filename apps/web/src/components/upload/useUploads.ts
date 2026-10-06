@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { uploads } from "@/lib/api/endpoints";
+import { games } from "@/lib/api/endpoints";
 import type { MediaKind } from "@/lib/api/types";
 import { uploadErrorMessage, uploadMedia, validateFile, type UploadPhase } from "@/lib/upload";
 
@@ -26,7 +26,7 @@ export function useUploads(gameId: string | undefined, onSettled: () => void) {
   const patch = (id: string, p: Partial<PendingUpload>) => setPending((l) => l.map((u) => (u.id === id ? { ...u, ...p } : u)));
 
   const start = useCallback(
-    (kind: MediaKind, files: File[], opts?: { replaceMediaId?: string | null }) => {
+    (kind: MediaKind, files: File[]) => {
       if (!gameId) return;
       for (const file of files) {
         const id = `up-${++counter}`;
@@ -46,9 +46,9 @@ export function useUploads(gameId: string | undefined, onSettled: () => void) {
             if (res.status === "rejected") {
               patch(id, { phase: "rejected", error: res.reason ?? "The file was rejected." });
             } else {
+              // The cover is only attached to the game once it is `ready` (a new cover/video replaces the old one).
+              if (kind === "cover") await games.update(gameId, { coverMediaId: res.mediaId });
               setPending((l) => l.filter((u) => u.id !== id));
-              // A replaced cover/video: drop the old one once the new one is ready.
-              if (opts?.replaceMediaId && opts.replaceMediaId !== res.mediaId) await uploads.removeMedia(opts.replaceMediaId).catch(() => undefined);
             }
             onSettled();
           })

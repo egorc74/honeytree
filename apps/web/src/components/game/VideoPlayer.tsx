@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import type { MediaItem } from "@/lib/api/types";
+import type { Media } from "@/lib/api/types";
 
-export function VideoPlayer({ video, title }: { video: MediaItem; title: string }) {
+export function VideoPlayer({ video, title }: { video: Media; title: string }) {
   const [failed, setFailed] = useState(false);
   const src = video.variants.mp4;
   return (

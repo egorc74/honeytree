@@ -6,12 +6,12 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { auth } from "@/lib/api/endpoints";
 import { UNAUTHORIZED_EVENT } from "@/lib/api/client";
 import { keys } from "@/lib/api/keys";
-import type { User } from "@/lib/api/types";
+import type { Me } from "@/lib/api/types";
 import { AuthForm } from "./AuthForm";
 import { Modal } from "./ui";
 
 interface AuthContextValue {
-  me: User | null;
+  me: Me | null;
   loading: boolean;
   /** Runs `action` now if logged in; otherwise opens the login modal and runs it after success. */
   requireAuth: (action?: () => void) => boolean;

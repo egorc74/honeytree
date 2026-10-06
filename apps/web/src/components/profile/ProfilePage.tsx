@@ -12,7 +12,7 @@ import { compactNumber, formatDate, formatRating, plural, timeAgo } from "@/lib/
 import { useAuth } from "../AuthProvider";
 import { GameCard } from "../GameCard";
 import {
-  Badge, Button, ButtonLink, EmptyState, ErrorState, GameGridSkeleton, HexAvatar, Modal, RowSkeleton, Skeleton, StarRating, TabPanel, Tabs, useToast,
+  Button, ButtonLink, EmptyState, ErrorState, GameGridSkeleton, HexAvatar, Modal, RowSkeleton, Skeleton, StarRating, TabPanel, Tabs, useToast,
 } from "../ui";
 import { EditProfileModal } from "./EditProfileModal";
 import { StatTile } from "./StatTile";
@@ -37,7 +37,7 @@ export function ProfilePage({ username, initial }: { username: string; initial?:
 
   const isMe = me?.id === profile.id;
   const s = profile.stats;
-  const links = Object.entries(profile.links ?? {}).filter(([, v]) => v);
+  const links = profile.links ?? [];
 
   return (
     <div className="space-y-8" data-testid="profile-page">
@@ -53,16 +53,14 @@ export function ProfilePage({ username, initial }: { username: string; initial?:
           {profile.bio && <p className="max-w-2xl whitespace-pre-line">{profile.bio}</p>}
           {links.length > 0 && (
             <ul className="flex flex-wrap gap-x-4 gap-y-1 text-sm" aria-label="Links">
-              {links.map(([k, v]) => (
-                <li key={k}>
-                  {/^https?:\/\//.test(v as string) ? (
-                    <a href={v as string} target="_blank" rel="noopener noreferrer nofollow" className="text-link underline">
-                      {k}
+              {links.map((l) => (
+                <li key={`${l.label}-${l.url}`}>
+                  {/^https?:\/\//.test(l.url) ? (
+                    <a href={l.url} target="_blank" rel="noopener noreferrer nofollow" className="text-link underline">
+                      {l.label}
                     </a>
                   ) : (
-                    <span className="text-muted">
-                      {k}: {v}
-                    </span>
+                    <span className="text-muted">{l.label}</span>
                   )}
                 </li>
               ))}
@@ -109,7 +107,7 @@ export function ProfilePage({ username, initial }: { username: string; initial?:
         </TabPanel>
       </div>
 
-      {isMe && me && editing && <EditProfileModal user={me} open onClose={() => setEditing(false)} />}
+      {isMe && me && editing && <EditProfileModal user={me} bio={profile.bio} links={profile.links ?? []} open onClose={() => setEditing(false)} />}
     </div>
   );
 }
@@ -136,7 +134,7 @@ function ProfileSkeleton() {
 function GamesTab({ username, isMe }: { username: string; isMe: boolean }) {
   const list = useInfiniteQuery({
     queryKey: keys.userGames(username),
-    queryFn: ({ pageParam }) => users.games(username, { cursor: pageParam }),
+    queryFn: ({ pageParam }) => users.games(username, { cursor: pageParam, status: isMe ? "all" : "published" }),
     initialPageParam: null as string | null,
     getNextPageParam: (l) => l.nextCursor,
   });
@@ -251,54 +249,39 @@ function ReviewsTab({ username }: { username: string }) {
 }
 
 const ACTIVITY_TEXT: Record<ActivityItem["type"], string> = {
-  like_game: "liked",
-  like_comment: "liked a comment on",
+  like: "liked",
   comment: "commented on",
   suggestion: "suggested an idea for",
   review: "reviewed",
-  publish: "published",
-  suggestion_accepted: "had a suggestion accepted on",
+  published: "published",
 };
-const ACTIVITY_ICON: Record<ActivityItem["type"], string> = {
-  like_game: "🍯", like_comment: "🍯", comment: "💬", suggestion: "💡", review: "⭐", publish: "🚀", suggestion_accepted: "✅",
-};
+const ACTIVITY_ICON: Record<ActivityItem["type"], string> = { like: "🍯", comment: "💬", suggestion: "💡", review: "⭐", published: "🚀" };
 
 function ActivityTab({ username }: { username: string }) {
-  const list = useInfiniteQuery({
-    queryKey: keys.userActivity(username),
-    queryFn: ({ pageParam }) => users.activity(username, { cursor: pageParam }),
-    initialPageParam: null as string | null,
-    getNextPageParam: (l) => l.nextCursor,
-  });
-  const items = list.data?.pages.flatMap((p) => p.items) ?? [];
-  if (list.isLoading) return <RowSkeleton />;
-  if (list.isError) return <EmptyState title="Activity isn’t available yet" description="The activity feed is still being built." emoji="🛠️" />;
-  if (!items.length) return <EmptyState title="No activity yet" emoji="🐝" />;
+  const { data: items, isLoading, isError, refetch } = useQuery({ queryKey: keys.userActivity(username), queryFn: () => users.activity(username) });
+  if (isLoading) return <RowSkeleton />;
+  if (isError) return <ErrorState onRetry={() => refetch()} />;
+  if (!items?.length) return <EmptyState title="No activity yet" emoji="🐝" />;
   return (
-    <>
-      <ol className="space-y-3" aria-label="Recent activity">
-        {items.map((a) => (
-          <li key={a.id} className="flex gap-3 rounded-lg border border-line bg-raised p-3">
-            <span aria-hidden className="text-xl">
-              {ACTIVITY_ICON[a.type]}
-            </span>
-            <div className="min-w-0">
-              <p>
-                {ACTIVITY_TEXT[a.type]}{" "}
-                {a.game && (
-                  <Link href={`/games/${a.game.slug}`} className="font-medium text-link underline">
-                    {a.game.title}
-                  </Link>
-                )}
-                <span className="ml-2 text-sm text-muted">{timeAgo(a.createdAt)}</span>
-              </p>
-              {a.excerpt && <p className="truncate text-sm text-muted">“{a.excerpt}”</p>}
-            </div>
-            {a.karma ? <Badge tone="honey" className="ml-auto self-start">+{a.karma}</Badge> : null}
-          </li>
-        ))}
-      </ol>
-      <LoadMore hasMore={!!list.hasNextPage} loading={list.isFetchingNextPage} onLoadMore={() => list.fetchNextPage()} />
-    </>
+    <ol className="space-y-3" aria-label="Recent activity">
+      {items.map((a, i) => (
+        <li key={`${a.type}-${a.createdAt}-${i}`} className="flex gap-3 rounded-lg border border-line bg-raised p-3">
+          <span aria-hidden className="text-xl">
+            {ACTIVITY_ICON[a.type]}
+          </span>
+          <div className="min-w-0">
+            <p>
+              {ACTIVITY_TEXT[a.type]}{" "}
+              <Link href={`/games/${a.game.slug}`} className="font-medium text-link underline">
+                {a.game.title}
+              </Link>
+              {a.type === "review" && a.rating ? <StarRating value={a.rating} showValue={false} size={14} className="ml-2 align-middle" /> : null}
+              <span className="ml-2 text-sm text-muted">{timeAgo(a.createdAt)}</span>
+            </p>
+            {a.excerpt && <p className="truncate text-sm text-muted">“{a.excerpt}”</p>}
+          </div>
+        </li>
+      ))}
+    </ol>
   );
 }

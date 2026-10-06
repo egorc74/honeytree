@@ -6,8 +6,8 @@ import { useEffect, useState, type FormEvent } from "react";
 import { LoadMore } from "@/hooks/useInfinite";
 import { reviews as reviewsApi } from "@/lib/api/endpoints";
 import { keys } from "@/lib/api/keys";
-import type { GameDetail, Review } from "@/lib/api/types";
-import { timeAgo } from "@/lib/format";
+import type { GameDetail, RatingSummary, Review } from "@/lib/api/types";
+import { plural, timeAgo } from "@/lib/format";
 import { useAuth } from "../AuthProvider";
 import { Button, EmptyState, HexAvatar, RowSkeleton, StarRating, StarRatingInput, TextArea, useToast } from "../ui";
 import { ReportButton } from "./ReportButton";
@@ -38,6 +38,7 @@ export function Reviews({ game }: { game: GameDetail }) {
     getNextPageParam: (l) => l.nextCursor,
   });
   const items = list.data?.pages.flatMap((p) => p.items) ?? [];
+  const summary = list.data?.pages[0]?.summary;
 
   function refresh() {
     void qc.invalidateQueries({ queryKey: keys.reviews(game.id) });
@@ -51,7 +52,7 @@ export function Reviews({ game }: { game: GameDetail }) {
     onSuccess: (res) => {
       setError(null);
       toast(mine ? "Review updated." : "Thanks for your review!", "success");
-      karma("karmaAwarded" in res ? (res as { karmaAwarded?: number }).karmaAwarded : undefined);
+      karma(res.karmaAwarded);
       refresh();
     },
     onError: (e) => setError(e instanceof Error ? e.message : "Could not save your review."),
@@ -83,6 +84,8 @@ export function Reviews({ game }: { game: GameDetail }) {
         </h2>
         <StarRating value={game.ratingAvg} count={game.reviewsCount} size={20} />
       </div>
+
+      {summary && summary.ratingCount > 0 && <RatingBars summary={summary} />}
 
       {isOwner ? (
         <p className="rounded-md bg-surface px-4 py-3 text-muted">You can’t review your own game. Players will leave theirs here.</p>
@@ -148,5 +151,29 @@ function ReviewItem({ review }: { review: Review }) {
         <ReportButton targetType="review" targetId={review.id} />
       </div>
     </li>
+  );
+}
+
+/** Star distribution from the API's rating summary. */
+function RatingBars({ summary }: { summary: RatingSummary }) {
+  const max = Math.max(1, ...Object.values(summary.distribution));
+  return (
+    <div className="space-y-1 rounded-lg border border-line bg-raised p-4" aria-label="Rating distribution" role="group">
+      {[5, 4, 3, 2, 1].map((stars) => {
+        const n = summary.distribution[String(stars)] ?? 0;
+        return (
+          <div key={stars} className="flex items-center gap-3 text-sm">
+            <span className="w-14 shrink-0 tabular-nums">{stars} stars</span>
+            <div className="h-2.5 flex-1 overflow-hidden rounded-pill bg-surface" aria-hidden>
+              <div className="h-full rounded-pill bg-primary" style={{ width: `${(n / max) * 100}%` }} />
+            </div>
+            <span className="w-8 text-right tabular-nums text-muted">
+              <span className="sr-only">{plural(n, "review")}</span>
+              <span aria-hidden>{n}</span>
+            </span>
+          </div>
+        );
+      })}
+    </div>
   );
 }

@@ -12,7 +12,7 @@ export interface Requirement {
 export function publishRequirements(g: GameDetail): Requirement[] {
   return [
     { label: "A title", done: !!g.title.trim() },
-    { label: "A cover image (processed)", done: g.coverMedia?.status === "ready" },
+    { label: "A cover image (processed)", done: g.cover?.status === "ready" },
     { label: "At least one screenshot (processed)", done: g.screenshots.some((s) => s.status === "ready") },
     { label: "At least one build that passed the malware scan", done: g.builds.some((b) => b.status === "ready") },
   ];

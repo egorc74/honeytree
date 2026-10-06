@@ -48,7 +48,7 @@ test("creator publishes, a gamer engages, stats and leaderboard update", async (
   await page.getByRole("button", { name: "Post comment" }).click();
   await expect(page.getByTestId("comment").filter({ hasText: "Great art style!" })).toBeVisible();
 
-  await page.getByRole("radio", { name: "💡 Suggestion" }).click();
+  await page.getByRole("radio", { name: "💡 Suggestion", exact: true }).click();
   await page.getByLabel("Your suggestion for the creator").fill("Please add a hard mode.");
   await page.getByRole("button", { name: "Post suggestion" }).click();
   const suggestion = page.getByTestId("suggestion").filter({ hasText: "Please add a hard mode." });

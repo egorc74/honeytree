@@ -23,6 +23,7 @@ export const emptyDetails: DetailsValue = { title: "", shortDescription: "", des
 export function validateDetails(v: DetailsValue): Record<string, string> {
   const e: Record<string, string> = {};
   if (!v.title.trim()) e.title = "Give your game a title.";
+  else if (v.title.trim().length < 3) e.title = "Title must be at least 3 characters.";
   else if (v.title.length > 80) e.title = "Title can be at most 80 characters.";
   if (!v.shortDescription.trim()) e.shortDescription = "Add a one-line pitch.";
   else if (v.shortDescription.length > 160) e.shortDescription = "Keep the pitch under 160 characters.";

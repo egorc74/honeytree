@@ -3,12 +3,15 @@
 
 import Link from "next/link";
 import { useToggleGameLike } from "@/hooks/useLikes";
+import { useAuth } from "./AuthProvider";
 import type { Game } from "@/lib/api/types";
 import { compactNumber, formatRating } from "@/lib/format";
 import { Badge, FeedBadge, HexAvatar, LikeButton, cx } from "./ui";
 
 export function GameCard({ game, className, priority = false }: { game: Game; className?: string; priority?: boolean }) {
   const toggleLike = useToggleGameLike();
+  const { me } = useAuth();
+  const isOwn = me?.id === game.owner.id;
 
   return (
     <article
@@ -19,9 +22,9 @@ export function GameCard({ game, className, priority = false }: { game: Game; cl
       )}
     >
       <div className="relative aspect-video overflow-hidden bg-raised">
-        {game.cover ? (
+        {game.coverUrl ? (
           <img
-            src={game.cover.card ?? game.cover.full}
+            src={game.coverUrl}
             alt={`${game.title} cover art`}
             width={640}
             height={360}
@@ -87,7 +90,7 @@ export function GameCard({ game, className, priority = false }: { game: Game; cl
             </div>
           </dl>
           <span className="relative z-10">
-            <LikeButton size="sm" label="game" liked={game.likedByMe} count={game.likesCount} onToggle={() => toggleLike(game)} />
+            <LikeButton size="sm" label="game" liked={game.likedByMe} count={game.likesCount} onToggle={() => toggleLike(game)} disabled={isOwn} title={isOwn ? "You can’t like your own game" : undefined} />
           </span>
         </div>
       </div>

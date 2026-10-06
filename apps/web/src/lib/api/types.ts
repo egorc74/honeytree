@@ -1,10 +1,9 @@
 /**
- * API types the web app codes against (PLAN.md §3.1/§3.2).
- *
- * Source of truth is `docs/contract/openapi.yaml` (Agent 1). Until it lands these
- * are hand-written from the plan; shapes the plan leaves open are listed in
- * `docs/requests/agent2-*.md`. When the real contract differs, fix it HERE
- * (one place) and file a request rather than working around it in components.
+ * API types the web app codes against. Source of truth: `docs/contract/openapi.yaml` (Agent 1)
+ * and `docs/requests/agent3-to-agent2-upload-and-media.md` (Agent 3).
+ * Responses are normalised in `endpoints.ts` (envelopes unwrapped, media variants flattened to URLs),
+ * so components only ever see the shapes below. Fix contract mismatches HERE and file a request;
+ * do not work around them in components.
  */
 
 export type Platform = "windows" | "mac" | "linux" | "web" | "android";
@@ -20,7 +19,7 @@ export interface Page<T> {
 }
 
 export interface ApiErrorBody {
-  error: { code: string; message: string };
+  error: { code: string; message: string; details?: unknown };
 }
 
 export interface UserSummary {
@@ -38,45 +37,51 @@ export interface UserStats {
   karma: number;
 }
 
-export interface UserLinks {
-  website?: string;
-  github?: string;
-  itch?: string;
-  twitter?: string;
-  discord?: string;
+export interface UserLink {
+  label: string;
+  url: string;
 }
 
-export interface User extends UserSummary {
-  email?: string; // only for `me`
-  bio: string;
-  links: UserLinks;
+/** Logged-in user (`GET /auth/me`). */
+export interface Me extends UserSummary {
+  email: string;
   role: "user" | "admin";
-  createdAt: string;
+  karma: number;
 }
 
-export interface UserProfile extends User {
+export interface UserProfile extends UserSummary {
+  bio: string;
+  links: UserLink[];
+  createdAt: string;
   stats: UserStats;
+}
+
+/** Search result / leaderboard row for a user. */
+export interface UserCard extends UserSummary {
+  stats?: UserStats;
 }
 
 export interface MediaVariants {
   thumb?: string; // 320
   card?: string; // 640
   full?: string; // 1600
-  mp4?: string;
+  mp4?: string; // 720p
   poster?: string;
 }
 
-export interface MediaItem {
+export interface Media {
   id: string;
   kind: MediaKind;
   status: MediaStatus;
-  originalName: string;
-  mime: string;
-  sizeBytes: number;
+  url: string | null;
   variants: MediaVariants;
+  originalName: string;
+  sizeBytes: number;
   sortOrder: number;
+  rejectReason?: string | null;
 }
 
+/** `GameSummary` in the contract: what lists, cards and the feed show. */
 export interface Game {
   id: string;
   slug: string;
@@ -84,30 +89,31 @@ export interface Game {
   shortDescription: string;
   tags: string[];
   platforms: Platform[];
-  version: string;
-  status: GameStatus;
-  cover: MediaVariants | null;
+  /** 640px card variant */
+  coverUrl: string | null;
   owner: UserSummary;
+  status: GameStatus;
   likesCount: number;
   downloadsCount: number;
   commentsCount: number;
   reviewsCount: number;
   ratingAvg: number | null;
   publishedAt: string | null;
-  createdAt: string;
   likedByMe: boolean;
-  /** Present on feed items only. */
-  badge?: FeedBadge;
+  /** Only on feed items. `null`/absent for the plain tail of the feed. */
+  badge?: FeedBadge | null;
 }
 
 export interface GameDetail extends Game {
   description: string; // markdown
-  /** The cover as a media record (id + processing status); `cover` has only the image variants. */
-  coverMedia: MediaItem | null;
-  screenshots: MediaItem[];
-  video: MediaItem | null;
-  builds: MediaItem[];
+  version: string;
+  cover: Media | null;
+  screenshots: Media[];
+  video: Media | null;
+  builds: Media[];
   myReview: Review | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface GameInput {
@@ -117,6 +123,7 @@ export interface GameInput {
   tags?: string[];
   platforms?: Platform[];
   version?: string;
+  coverMediaId?: string | null;
 }
 
 export interface Review {
@@ -129,60 +136,69 @@ export interface Review {
   updatedAt: string;
 }
 
+export interface RatingSummary {
+  ratingAvg: number | null;
+  ratingCount: number;
+  distribution: Record<string, number>;
+}
+
+export interface ReviewPage extends Page<Review> {
+  summary?: RatingSummary;
+}
+
 /** Review as listed on a profile ("Reviews written"): includes the game. */
 export interface ProfileReview extends Review {
-  game: Pick<Game, "id" | "slug" | "title" | "cover">;
+  game: { id: string; slug: string; title: string; coverUrl: string | null };
 }
 
 export interface Comment {
   id: string;
   gameId: string;
   parentId: string | null;
-  user: UserSummary;
   kind: CommentKind;
-  body: string;
+  /** null when deleted */
+  body: string | null;
+  deleted: boolean;
+  /** null when deleted */
+  user: UserSummary | null;
   acceptedAt: string | null;
   likesCount: number;
   likedByMe: boolean;
-  deletedAt: string | null;
   createdAt: string;
-  /** One level of replies, inlined for top-level comments. */
+  /** Top-level comments only. */
   replies?: Comment[];
+  repliesCount?: number;
 }
-
-export interface FeedResponse extends Page<Game> {}
 
 export type LeaderboardType = "games" | "creators" | "karma";
 export type LeaderboardPeriod = "week" | "month" | "all";
 
 export interface LeaderboardEntry {
   rank: number;
-  /** games: Game, creators/karma: UserSummary */
-  game?: Game;
-  user?: UserSummary;
-  /** the number the ranking is by (likes, likes received, karma) */
   score: number;
+  game?: Game;
+  user?: UserCard;
 }
 
 export interface SearchSuggestResponse {
-  games: Pick<Game, "id" | "slug" | "title" | "cover" | "tags">[];
+  games: { id: string; slug: string; title: string; coverUrl: string | null }[];
   users: UserSummary[];
 }
 
-export interface SearchResponse<T> extends Page<T> {
-  facets?: { tags: { tag: string; count: number }[] };
+export interface TagCount {
+  tag: string;
+  count: number;
 }
 
 export interface ActivityItem {
-  id: string;
-  type: "like_game" | "like_comment" | "comment" | "suggestion" | "review" | "publish" | "suggestion_accepted";
+  type: "comment" | "suggestion" | "review" | "like" | "published";
   createdAt: string;
-  game: Pick<Game, "id" | "slug" | "title"> | null;
-  excerpt?: string;
-  karma?: number;
+  excerpt?: string | null;
+  rating?: number | null;
+  game: { id: string; slug: string; title: string };
 }
 
-/** Returned by actions that can earn karma so the UI can show "+1 karma 🍯". */
+/** Write endpoints that can earn/lose karma return this (positive = earned, negative = reversed). */
 export interface KarmaAward {
   karmaAwarded?: number;
 }
@@ -192,22 +208,20 @@ export interface LikeResult extends KarmaAward {
   likesCount: number;
 }
 
+/** `POST /games/:id/uploads` (Agent 3): presigned PUT straight to storage. */
 export interface UploadInit {
+  /** equals `media.id` */
   uploadId: string;
   url: string;
+  method: "PUT";
+  headers: Record<string, string>;
   fields: Record<string, string>;
-  mediaId?: string;
-}
-
-export interface UploadStatus {
-  uploadId: string;
-  mediaId: string;
-  status: MediaStatus;
-  reason?: string;
+  expiresAt?: string;
+  media: Media;
 }
 
 export interface UploadRequest {
-  kind: Exclude<MediaKind, "avatar"> | "avatar";
+  kind: MediaKind;
   filename: string;
   size: number;
   mime: string;

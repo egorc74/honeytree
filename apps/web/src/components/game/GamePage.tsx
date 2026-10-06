@@ -53,7 +53,8 @@ function GameContent({ game }: { game: GameDetail }) {
   const { toast } = useToast();
   const toggleLike = useToggleGameLike();
   const isOwner = me?.id === game.owner.id;
-  const build = game.builds.find((b) => b.status === "ready") ?? game.builds[0];
+  const readyBuilds = game.builds.filter((b) => b.status === "ready");
+  const build = readyBuilds[0] ?? game.builds[0];
   const [downloading, setDownloading] = useState(false);
 
   const status = useMutation({
@@ -64,10 +65,10 @@ function GameContent({ game }: { game: GameDetail }) {
     onError: (e) => toast(e instanceof Error ? e.message : "Could not update the game.", "error"),
   });
 
-  async function download() {
+  async function download(mediaId?: string) {
     setDownloading(true);
     try {
-      await startDownload(game.id, `${game.slug}.txt`);
+      await startDownload(game.id, `${game.slug}.txt`, mediaId);
       toast("Your download is starting… 🍯", "success");
       setTimeout(() => void qc.invalidateQueries({ queryKey: keys.game(game.slug) }), 1200);
     } catch {
@@ -111,8 +112,8 @@ function GameContent({ game }: { game: GameDetail }) {
         <div className="min-w-0 space-y-6">
           {game.video ? (
             <VideoPlayer video={game.video} title={game.title} />
-          ) : game.cover ? (
-            <img src={game.cover.full ?? game.cover.card} alt={`${game.title} cover art`} className="aspect-video w-full rounded-lg border-2 border-line object-cover" />
+          ) : game.cover?.variants.full || game.coverUrl ? (
+            <img src={game.cover?.variants.full ?? game.coverUrl ?? undefined} alt={`${game.title} cover art`} className="aspect-video w-full rounded-lg border-2 border-line object-cover" />
           ) : null}
           <Gallery screenshots={game.screenshots} title={game.title} />
 
@@ -137,11 +138,23 @@ function GameContent({ game }: { game: GameDetail }) {
 
         <aside className="space-y-4 lg:sticky lg:top-24 lg:self-start" aria-label="Download and details">
           <div className="space-y-4 rounded-lg border-2 border-line bg-surface p-5">
-            <Button size="lg" className="w-full" onClick={download} loading={downloading} disabled={!build || game.status !== "published"} data-testid="download-button">
+            <Button size="lg" className="w-full" onClick={() => download()} loading={downloading} disabled={!build || game.status !== "published"} data-testid="download-button">
               ⬇ Download{build ? ` (${formatBytes(build.sizeBytes)})` : ""}
             </Button>
+            {readyBuilds.length > 1 && (
+              <ul className="space-y-1 text-sm" aria-label="All builds">
+                {readyBuilds.map((b) => (
+                  <li key={b.id} className="flex items-center justify-between gap-2">
+                    <span className="min-w-0 truncate">{b.originalName}</span>
+                    <button type="button" className="shrink-0 font-medium text-link underline" onClick={() => download(b.id)} aria-label={`Download ${b.originalName}`}>
+                      {formatBytes(b.sizeBytes)} ⬇
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
             <div className="flex items-center justify-between gap-3">
-              <LikeButton size="lg" label="game" liked={game.likedByMe} count={game.likesCount} onToggle={() => toggleLike(game)} />
+              <LikeButton size="lg" label="game" liked={game.likedByMe} count={game.likesCount} onToggle={() => toggleLike(game)} disabled={isOwner} title={isOwner ? "You can’t like your own game" : undefined} />
               <StarRating value={game.ratingAvg} count={game.reviewsCount} />
             </div>
             <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">

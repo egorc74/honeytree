@@ -5,18 +5,19 @@
  * does not wipe the session during manual testing and Playwright runs.
  */
 import type {
+  Comment,
   CommentKind,
   FeedBadge,
   Game,
   GameDetail,
   GameStatus,
-  MediaItem,
+  Me,
+  Media,
   MediaStatus,
   Platform,
   Review,
-  Comment,
-  User,
-  UserLinks,
+  UserCard,
+  UserLink,
   UserProfile,
   UserStats,
   UserSummary,
@@ -30,7 +31,7 @@ export interface DbUser {
   password: string;
   displayName: string;
   bio: string;
-  links: UserLinks;
+  links: UserLink[];
   role: "user" | "admin";
   avatarUrl: string | null;
   createdAt: string;
@@ -58,13 +59,14 @@ export interface DbGame {
 export interface DbMedia {
   id: string;
   gameId: string | null;
-  kind: MediaItem["kind"];
+  kind: Media["kind"];
   originalName: string;
   mime: string;
   sizeBytes: number;
   status: MediaStatus;
   seed: string;
   sortOrder: number;
+  rejectReason?: string;
   /** epoch ms the scan/process pipeline started, for the simulated status progression */
   pipelineStartedAt?: number;
 }
@@ -117,7 +119,7 @@ export interface DbState {
   sessionUserId: string | null;
 }
 
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const STORAGE_KEY = "honeytree-mock-db";
 const DAY = 86_400_000;
 
@@ -207,7 +209,7 @@ function seedState(): DbState {
     s.users.push({
       id: `u_${i + 1}`, username, email: `${username}@honeytree.dev`, password: "honeytree123", displayName: display,
       bio: i % 3 === 0 ? "Making small games with big hearts. Powered by tea and honey." : i % 3 === 1 ? "Indie dev. Pixel art enthusiast. Occasional game jam survivor." : "",
-      links: i % 2 === 0 ? { website: `https://example.com/${username}`, github: `https://github.com/${username}` } : {},
+      links: i % 2 === 0 ? [{ label: "Website", url: `https://example.com/${username}` }, { label: "GitHub", url: `https://github.com/${username}` }] : [],
       role: i === 1 ? "admin" : "user", avatarUrl: placeholderAvatar(username, display), createdAt: iso(now - (60 + i * 3) * DAY),
     });
   });
@@ -365,18 +367,18 @@ export function userSummary(u: DbUser): UserSummary {
   return { id: u.id, username: u.username, displayName: u.displayName, avatarUrl: u.avatarUrl };
 }
 
-export function toUser(u: DbUser, includeEmail = false): User {
-  return {
-    ...userSummary(u), ...(includeEmail ? { email: u.email } : {}), bio: u.bio, links: u.links, role: u.role, createdAt: u.createdAt,
-  };
+export function toMe(s: DbState, u: DbUser): Me {
+  return { ...userSummary(u), email: u.email, role: u.role, karma: karmaTotal(s, u.id) };
 }
 
 export function userStats(s: DbState, u: DbUser): UserStats {
   const own = s.games.filter((g) => g.ownerId === u.id && g.status === "published");
   const ids = new Set(own.map((g) => g.id));
+  const myComments = new Set(s.comments.filter((c) => c.userId === u.id && !c.deletedAt).map((c) => c.id));
   const rs = s.reviews.filter((r) => ids.has(r.gameId));
   return {
-    likesReceived: s.gameLikes.filter((l) => ids.has(l.gameId)).length,
+    // Likes on the user's games plus likes on the user's comments.
+    likesReceived: s.gameLikes.filter((l) => ids.has(l.gameId)).length + s.commentLikes.filter((l) => myComments.has(l.commentId)).length,
     gamesCount: own.length,
     ratingAvg: rs.length ? Math.round((rs.reduce((n, r) => n + r.rating, 0) / rs.length) * 10) / 10 : null,
     ratingCount: rs.length,
@@ -384,28 +386,35 @@ export function userStats(s: DbState, u: DbUser): UserStats {
   };
 }
 
-export function toProfile(s: DbState, u: DbUser, includeEmail = false): UserProfile {
-  return { ...toUser(u, includeEmail), stats: userStats(s, u) };
+export function toProfile(s: DbState, u: DbUser): UserProfile {
+  return { ...userSummary(u), bio: u.bio, links: u.links, createdAt: u.createdAt, stats: userStats(s, u) };
 }
 
-export function mediaItem(m: DbMedia): MediaItem {
+export function toUserCard(s: DbState, u: DbUser): UserCard {
+  return { ...userSummary(u), stats: userStats(s, u) };
+}
+
+export function mediaItem(m: DbMedia): Media {
+  const ready = m.status === "ready";
   const variants =
-    m.kind === "video"
-      ? { mp4: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4", poster: placeholderImage(m.seed, "▶ Trailer", 1280, 720) }
-      : m.kind === "build"
-        ? {}
+    !ready || m.kind === "build"
+      ? {}
+      : m.kind === "video"
+        ? { mp4: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4", poster: placeholderImage(m.seed, "▶ Trailer", 1280, 720) }
         : { thumb: placeholderImage(m.seed, "", 320, 180), card: placeholderImage(m.seed, "", 640, 360), full: placeholderImage(m.seed, "", 1600, 900) };
-  return { id: m.id, kind: m.kind, status: m.status, originalName: m.originalName, mime: m.mime, sizeBytes: m.sizeBytes, variants, sortOrder: m.sortOrder };
+  return {
+    id: m.id, kind: m.kind, status: m.status, url: ready && m.kind !== "build" ? (variants.full ?? null) : null, variants,
+    originalName: m.originalName, sizeBytes: m.sizeBytes, sortOrder: m.sortOrder, ...(m.rejectReason ? { rejectReason: m.rejectReason } : {}),
+  };
 }
 
-function coverVariants(g: DbGame) {
-  const m = g.media.find((x) => x.id === g.coverMediaId);
-  if (!m || m.status !== "ready") return null;
-  return {
-    thumb: placeholderImage(m.seed + g.title, g.title, 320, 180),
-    card: placeholderImage(m.seed + g.title, g.title, 640, 360),
-    full: placeholderImage(m.seed + g.title, g.title, 1600, 900),
-  };
+function coverMedia(g: DbGame): DbMedia | undefined {
+  return g.media.find((m) => m.id === g.coverMediaId && m.kind === "cover");
+}
+
+function coverUrl(g: DbGame): string | null {
+  const m = coverMedia(g);
+  return m && m.status === "ready" ? placeholderImage(m.seed + g.title, g.title, 640, 360) : null;
 }
 
 export function gameStats(s: DbState, g: DbGame) {
@@ -419,13 +428,12 @@ export function gameStats(s: DbState, g: DbGame) {
   };
 }
 
-export function toGame(s: DbState, g: DbGame, me: string | null, badge?: FeedBadge): Game {
+export function toGame(s: DbState, g: DbGame, me: string | null): Game {
   const owner = s.users.find((u) => u.id === g.ownerId)!;
   return {
     id: g.id, slug: g.slug, title: g.title, shortDescription: g.shortDescription, tags: g.tags, platforms: g.platforms,
-    version: g.version, status: g.status, cover: coverVariants(g), owner: userSummary(owner), ...gameStats(s, g),
-    publishedAt: g.publishedAt, createdAt: g.createdAt, likedByMe: !!me && s.gameLikes.some((l) => l.gameId === g.id && l.userId === me),
-    ...(badge ? { badge } : {}),
+    coverUrl: coverUrl(g), owner: userSummary(owner), status: g.status, ...gameStats(s, g), publishedAt: g.publishedAt,
+    likedByMe: !!me && s.gameLikes.some((l) => l.gameId === g.id && l.userId === me),
   };
 }
 
@@ -438,19 +446,23 @@ export function toComment(s: DbState, c: DbComment, me: string | null): Comment 
   const u = s.users.find((x) => x.id === c.userId)!;
   const deleted = !!c.deletedAt;
   return {
-    id: c.id, gameId: c.gameId, parentId: c.parentId, user: userSummary(u), kind: c.kind, body: deleted ? "" : c.body,
-    acceptedAt: c.acceptedAt, likesCount: s.commentLikes.filter((l) => l.commentId === c.id).length,
-    likedByMe: !!me && s.commentLikes.some((l) => l.commentId === c.id && l.userId === me), deletedAt: c.deletedAt, createdAt: c.createdAt,
+    id: c.id, gameId: c.gameId, parentId: c.parentId, kind: c.kind, body: deleted ? null : c.body, deleted,
+    user: deleted ? null : userSummary(u), acceptedAt: c.acceptedAt, likesCount: s.commentLikes.filter((l) => l.commentId === c.id).length,
+    likedByMe: !!me && s.commentLikes.some((l) => l.commentId === c.id && l.userId === me), createdAt: c.createdAt,
   };
 }
 
 export function toGameDetail(s: DbState, g: DbGame, me: string | null): GameDetail {
-  const ready = (kind: DbMedia["kind"]) => g.media.filter((m) => m.kind === kind).sort((a, b) => a.sortOrder - b.sortOrder).map(mediaItem);
+  const isOwner = !!me && (me === g.ownerId || s.users.find((u) => u.id === me)?.role === "admin");
+  // Non-owners only ever see `ready` media.
+  const visible = (m: DbMedia) => isOwner || m.status === "ready";
+  const list = (kind: DbMedia["kind"]) => g.media.filter((m) => m.kind === kind && visible(m)).sort((a, b) => a.sortOrder - b.sortOrder).map(mediaItem);
   const mine = me ? s.reviews.find((r) => r.gameId === g.id && r.userId === me) : undefined;
+  const cover = coverMedia(g);
   return {
-    ...toGame(s, g, me), description: g.description, coverMedia: g.media.find((m) => m.id === g.coverMediaId && m.kind === "cover") ? mediaItem(g.media.find((m) => m.id === g.coverMediaId)!) : null,
-    screenshots: ready("screenshot"),
-    video: ready("video")[0] ?? null, builds: ready("build"), myReview: mine ? toReview(s, mine) : null,
+    ...toGame(s, g, me), description: g.description, version: g.version, cover: cover && visible(cover) ? mediaItem(cover) : null,
+    screenshots: list("screenshot"), video: list("video")[0] ?? null, builds: list("build"), myReview: mine ? toReview(s, mine) : null,
+    createdAt: g.createdAt, updatedAt: g.createdAt,
   };
 }
 
@@ -482,12 +494,12 @@ export function feedLists(s: DbState) {
 }
 
 /** Buzzing, Fresh, Sweetest, Fresh, Buzzing, Sweetest, … without duplicates. */
-export function mixedFeed(s: DbState): { game: DbGame; badge: FeedBadge }[] {
+export function mixedFeed(s: DbState): { game: DbGame; badge: FeedBadge | null }[] {
   const { buzzing, fresh, sweetest } = feedLists(s);
   const lists: Record<FeedBadge, DbGame[]> = { buzzing: [...buzzing], fresh: [...fresh], sweetest: [...sweetest] };
   const pattern: FeedBadge[] = ["buzzing", "fresh", "sweetest", "fresh", "buzzing", "sweetest"];
   const seen = new Set<string>();
-  const out: { game: DbGame; badge: FeedBadge }[] = [];
+  const out: { game: DbGame; badge: FeedBadge | null }[] = [];
   const take = (badge: FeedBadge) => {
     const l = lists[badge];
     while (l.length) {
@@ -506,7 +518,7 @@ export function mixedFeed(s: DbState): { game: DbGame; badge: FeedBadge }[] {
   }
   // Everything else, newest first.
   for (const g of [...s.games].filter((x) => x.status === "published" && x.coverMediaId && !seen.has(x.id)).sort((a, b) => b.publishedAt!.localeCompare(a.publishedAt!))) {
-    out.push({ game: g, badge: "fresh" });
+    out.push({ game: g, badge: null });
   }
   return out;
 }

@@ -2,10 +2,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { MediaItem } from "@/lib/api/types";
+import type { Media } from "@/lib/api/types";
 import { cx } from "../ui";
 
-export function Gallery({ screenshots, title }: { screenshots: MediaItem[]; title: string }) {
+export function Gallery({ screenshots, title }: { screenshots: Media[]; title: string }) {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
   const triggers = useRef<(HTMLButtonElement | null)[]>([]);
 
@@ -26,7 +26,7 @@ export function Gallery({ screenshots, title }: { screenshots: MediaItem[]; titl
               className="group block aspect-video w-full overflow-hidden rounded-md border-2 border-line"
             >
               <img
-                src={s.variants.card ?? s.variants.thumb}
+                src={s.variants.card ?? s.variants.thumb ?? s.variants.full}
                 alt={`${title} screenshot ${i + 1}`}
                 loading="lazy"
                 className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105 motion-reduce:transition-none"
@@ -59,7 +59,7 @@ function Lightbox({
   onIndex,
   onClose,
 }: {
-  items: MediaItem[];
+  items: Media[];
   index: number;
   title: string;
   onIndex: (i: number) => void;

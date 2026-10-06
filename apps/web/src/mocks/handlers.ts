@@ -4,11 +4,11 @@
  * Node/SSR (absolute) request URLs.
  */
 import { delay, http, HttpResponse } from "msw";
-import type { ActivityItem, CommentKind, GameInput, LeaderboardEntry, MediaStatus, Platform } from "@/lib/api/types";
+import type { ActivityItem, CommentKind, GameInput, LeaderboardEntry, MediaStatus, Platform, UserLink } from "@/lib/api/types";
 import {
   awardKarma, currentUser, db, engagement, feedLists, gameStats, karmaTotal, mixedFeed, MIN_REVIEW_KARMA_LENGTH,
   nextId, periodStart, persist, resetDb, reverseKarma, slugify, toComment, toGame, toGameDetail, toProfile,
-  toReview, toUser, userSummary, type DbGame, type DbMedia, type DbState,
+  toMe, toReview, toUserCard, userSummary, mediaItem, type DbGame, type DbMedia, type DbState,
 } from "./db";
 import { placeholderAvatar } from "./placeholder";
 
@@ -19,7 +19,8 @@ const DAY = 86_400_000;
 function err(status: number, code: string, message: string) {
   return HttpResponse.json({ error: { code, message } }, { status });
 }
-const unauthorized = () => err(401, "UNAUTHORIZED", "Please log in to do that.");
+const unauthorized = () => err(401, "UNAUTHENTICATED", "Please log in to do that.");
+const selfAction = (m: string) => err(403, "SELF_ACTION", m);
 const forbidden = (m = "You are not allowed to do that.") => err(403, "FORBIDDEN", m);
 const notFound = (what = "Not found") => err(404, "NOT_FOUND", what);
 
@@ -76,7 +77,10 @@ function pipelineStatus(m: DbMedia): MediaStatus {
   const t = Date.now() - (m.pipelineStartedAt ?? 0);
   const rejected = /eicar|virus|malware/i.test(m.originalName);
   if (t < 700) return "scanning";
-  if (rejected) return "rejected";
+  if (rejected) {
+    m.rejectReason = "Malware detected";
+    return "rejected";
+  }
   if (t < 1400) return "processing";
   return "ready";
 }
@@ -86,12 +90,13 @@ function settle(m: DbMedia) {
   return m;
 }
 
-const LIMITS: Record<string, { max: number; mimes: RegExp; label: string }> = {
-  build: { max: 2 * 1024 ** 3, mimes: /^(application\/(zip|x-zip-compressed|x-msdownload|x-apple-diskimage|vnd\.android\.package-archive|gzip|x-gzip|x-tar|x-iso9660-image|octet-stream|x-executable)|application\/x-)/, label: "2 GB" },
-  video: { max: 300 * 1024 ** 2, mimes: /^video\//, label: "300 MB" },
-  screenshot: { max: 10 * 1024 ** 2, mimes: /^image\//, label: "10 MB" },
-  cover: { max: 10 * 1024 ** 2, mimes: /^image\//, label: "10 MB" },
-  avatar: { max: 10 * 1024 ** 2, mimes: /^image\//, label: "10 MB" },
+const IMG = /\.(png|jpe?g|webp|gif)$/i;
+const LIMITS: Record<string, { max: number; ext: RegExp; label: string }> = {
+  build: { max: 2 * 1024 ** 3, ext: /\.(zip|exe|dmg|apk|appimage|tar\.gz|tgz)$/i, label: "2 GB" },
+  video: { max: 300 * 1024 ** 2, ext: /\.(mp4|mov|webm)$/i, label: "300 MB" },
+  screenshot: { max: 10 * 1024 ** 2, ext: IMG, label: "10 MB" },
+  cover: { max: 10 * 1024 ** 2, ext: IMG, label: "10 MB" },
+  avatar: { max: 10 * 1024 ** 2, ext: IMG, label: "10 MB" },
 };
 
 function gamesSnapshot(s: DbState, meId: string | null, ids: DbGame[]) {
@@ -103,33 +108,33 @@ export const handlers = [
   http.post(`${BASE}/auth/register`, async ({ request }) => {
     await delay(80);
     const s = db();
-    const body = (await request.json()) as { username?: string; email?: string; password?: string };
+    const body = (await request.json()) as { username?: string; email?: string; password?: string; displayName?: string };
     const username = (body.username ?? "").trim();
-    if (!/^[a-zA-Z0-9_]{3,24}$/.test(username)) return err(422, "VALIDATION_ERROR", "Username must be 3–24 letters, numbers or underscores.");
+    if (!/^[a-z0-9_]{3,24}$/.test(username)) return err(422, "VALIDATION_ERROR", "Username must be 3–24 lowercase letters, numbers or underscores.");
     if (!/^\S+@\S+\.\S+$/.test(body.email ?? "")) return err(422, "VALIDATION_ERROR", "Enter a valid email address.");
     if ((body.password ?? "").length < 8) return err(422, "VALIDATION_ERROR", "Password must be at least 8 characters.");
     if (s.users.some((u) => u.username.toLowerCase() === username.toLowerCase())) return err(409, "USERNAME_TAKEN", "That username is taken.");
     if (s.users.some((u) => u.email.toLowerCase() === body.email!.toLowerCase())) return err(409, "EMAIL_TAKEN", "That email is already registered.");
     const user = {
-      id: nextId("u"), username, email: body.email!, password: body.password!, displayName: username, bio: "", links: {}, role: "user" as const,
+      id: nextId("u"), username, email: body.email!, password: body.password!, displayName: body.displayName?.trim() || username, bio: "", links: [] as UserLink[], role: "user" as const,
       avatarUrl: placeholderAvatar(username, username), createdAt: new Date().toISOString(),
     };
     s.users.push(user);
     s.sessionUserId = user.id;
     persist();
-    return HttpResponse.json({ user: toUser(user, true) }, { status: 201 });
+    return HttpResponse.json({ user: toMe(s, user) }, { status: 201 });
   }),
 
   http.post(`${BASE}/auth/login`, async ({ request }) => {
     await delay(80);
     const s = db();
-    const body = (await request.json()) as { email?: string; password?: string };
-    const id = (body.email ?? "").toLowerCase();
+    const body = (await request.json()) as { identifier?: string; password?: string };
+    const id = (body.identifier ?? "").toLowerCase();
     const user = s.users.find((u) => u.email.toLowerCase() === id || u.username.toLowerCase() === id);
     if (!user || user.password !== body.password) return err(401, "INVALID_CREDENTIALS", "Wrong email or password.");
     s.sessionUserId = user.id;
     persist();
-    return HttpResponse.json({ user: toUser(user, true) });
+    return HttpResponse.json({ user: toMe(s, user) });
   }),
 
   http.post(`${BASE}/auth/logout`, () => {
@@ -139,8 +144,9 @@ export const handlers = [
   }),
 
   http.get(`${BASE}/auth/me`, () => {
-    const me = currentUser(db());
-    return me ? HttpResponse.json({ user: toUser(me, true) }) : unauthorized();
+    const s = db();
+    const me = currentUser(s);
+    return me ? HttpResponse.json({ user: toMe(s, me) }) : unauthorized();
   }),
 
   /* ------------------------------- users ------------------------------- */
@@ -148,7 +154,7 @@ export const handlers = [
     const s = db();
     const me = currentUser(s);
     if (!me) return unauthorized();
-    const body = (await request.json()) as { displayName?: string; bio?: string; links?: Record<string, string>; avatarMediaId?: string };
+    const body = (await request.json()) as { displayName?: string; bio?: string; links?: UserLink[]; avatarMediaId?: string | null };
     if (body.displayName !== undefined) {
       if (!body.displayName.trim() || body.displayName.length > 40) return err(422, "VALIDATION_ERROR", "Display name must be 1–40 characters.");
       me.displayName = body.displayName.trim();
@@ -157,12 +163,17 @@ export const handlers = [
       if (body.bio.length > 500) return err(422, "VALIDATION_ERROR", "Bio can be at most 500 characters.");
       me.bio = body.bio;
     }
-    if (body.links) me.links = Object.fromEntries(Object.entries(body.links).filter(([, v]) => v));
+    if (body.links) {
+      if (body.links.length > 5 || body.links.some((l) => !l.label?.trim() || !/^https?:\/\//.test(l.url ?? ""))) return err(422, "VALIDATION_ERROR", "Links need a label and an http(s) URL (max 5).");
+      me.links = body.links.map((l) => ({ label: l.label.trim().slice(0, 30), url: l.url }));
+    }
     if (body.avatarMediaId) {
-      me.avatarUrl = placeholderAvatar(body.avatarMediaId + me.username, me.displayName);
+      const m = avatarMedia.get(body.avatarMediaId);
+      if (!m || m.status !== "ready") return err(422, "VALIDATION_ERROR", "That avatar is not ready yet.");
+      me.avatarUrl = placeholderAvatar(m.seed + me.username, me.displayName);
     }
     persist();
-    return HttpResponse.json(toUser(me, true));
+    return HttpResponse.json({ user: toProfile(s, me) });
   }),
 
   http.get(`${BASE}/users/:username`, async ({ params }) => {
@@ -170,7 +181,7 @@ export const handlers = [
     const s = db();
     const u = s.users.find((x) => x.username.toLowerCase() === String(params.username).toLowerCase());
     if (!u) return notFound("User not found");
-    return HttpResponse.json(toProfile(s, u));
+    return HttpResponse.json({ user: toProfile(s, u) });
   }),
 
   http.get(`${BASE}/users/:username/games`, ({ params, request }) => {
@@ -179,8 +190,9 @@ export const handlers = [
     const u = s.users.find((x) => x.username.toLowerCase() === String(params.username).toLowerCase());
     if (!u) return notFound("User not found");
     const own = me?.id === u.id;
+    const want = own ? (new URL(request.url).searchParams.get("status") ?? "published") : "published";
     const list = s.games
-      .filter((g) => g.ownerId === u.id && (own ? g.status !== "removed" : g.status === "published"))
+      .filter((g) => g.ownerId === u.id && g.status !== "removed" && (want === "all" || g.status === want))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     const page = paginate(list, request, 12);
     return HttpResponse.json({ ...page, items: gamesSnapshot(s, me?.id ?? null, page.items) });
@@ -197,28 +209,27 @@ export const handlers = [
       items: page.items.map((r) => {
         const g = s.games.find((x) => x.id === r.gameId)!;
         const tg = toGame(s, g, null);
-        return { ...toReview(s, r), game: { id: tg.id, slug: tg.slug, title: tg.title, cover: tg.cover } };
+        return { ...toReview(s, r), game: { id: tg.id, slug: tg.slug, title: tg.title, coverUrl: tg.coverUrl } };
       }),
     });
   }),
 
-  http.get(`${BASE}/users/:username/activity`, ({ params, request }) => {
+  http.get(`${BASE}/users/:username/activity`, ({ params }) => {
     const s = db();
     const u = s.users.find((x) => x.username.toLowerCase() === String(params.username).toLowerCase());
     if (!u) return notFound("User not found");
     const title = (gameId: string) => {
-      const g = s.games.find((x) => x.id === gameId);
+      const g = s.games.find((x) => x.id === gameId && x.status === "published");
       return g ? { id: g.id, slug: g.slug, title: g.title } : null;
     };
     const items: ActivityItem[] = [];
-    for (const l of s.gameLikes.filter((x) => x.userId === u.id)) items.push({ id: `a_gl_${l.gameId}`, type: "like_game", createdAt: l.createdAt, game: title(l.gameId) });
-    for (const r of s.reviews.filter((x) => x.userId === u.id)) items.push({ id: `a_r_${r.id}`, type: "review", createdAt: r.createdAt, game: title(r.gameId), excerpt: r.body });
-    for (const c of s.comments.filter((x) => x.userId === u.id && !x.deletedAt))
-      items.push({ id: `a_c_${c.id}`, type: c.kind, createdAt: c.createdAt, game: title(c.gameId), excerpt: c.body });
-    for (const g of s.games.filter((x) => x.ownerId === u.id && x.status === "published" && x.publishedAt))
-      items.push({ id: `a_p_${g.id}`, type: "publish", createdAt: g.publishedAt!, game: { id: g.id, slug: g.slug, title: g.title } });
+    const push = (it: Omit<ActivityItem, "game"> & { game: ActivityItem["game"] | null }) => it.game && items.push(it as ActivityItem);
+    for (const l of s.gameLikes.filter((x) => x.userId === u.id)) push({ type: "like", createdAt: l.createdAt, game: title(l.gameId) });
+    for (const r of s.reviews.filter((x) => x.userId === u.id)) push({ type: "review", createdAt: r.createdAt, game: title(r.gameId), excerpt: r.body, rating: r.rating });
+    for (const c of s.comments.filter((x) => x.userId === u.id && !x.deletedAt)) push({ type: c.kind, createdAt: c.createdAt, game: title(c.gameId), excerpt: c.body });
+    for (const g of s.games.filter((x) => x.ownerId === u.id && x.status === "published" && x.publishedAt)) push({ type: "published", createdAt: g.publishedAt!, game: { id: g.id, slug: g.slug, title: g.title } });
     items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    return HttpResponse.json(paginate(items, request, 15));
+    return HttpResponse.json({ items: items.slice(0, 30) });
   }),
 
   /* ------------------------------- games ------------------------------- */
@@ -229,6 +240,7 @@ export const handlers = [
     const body = (await request.json()) as GameInput;
     const bad = validateGameInput(body, true);
     if (bad) return bad;
+    if ((body.title ?? "").trim().length < 3) return err(422, "VALIDATION_ERROR", "Title must be at least 3 characters.");
     const id = nextId("g");
     let slug = slugify(body.title ?? "untitled");
     while (s.games.some((g) => g.slug === slug)) slug = `${slug}-${Math.floor(Math.random() * 900 + 100)}`;
@@ -239,7 +251,7 @@ export const handlers = [
     };
     s.games.push(g);
     persist();
-    return HttpResponse.json(toGameDetail(s, g, me.id), { status: 201 });
+    return HttpResponse.json({ game: toGameDetail(s, g, me.id) }, { status: 201 });
   }),
 
   http.get(`${BASE}/games/:key`, async ({ params }) => {
@@ -249,7 +261,7 @@ export const handlers = [
     const g = findGame(s, String(params.key));
     if (!g || !visibleTo(g, me?.id ?? null, s)) return notFound("Game not found");
     g.media.forEach(settle);
-    return HttpResponse.json(toGameDetail(s, g, me?.id ?? null));
+    return HttpResponse.json({ game: toGameDetail(s, g, me?.id ?? null) });
   }),
 
   http.patch(`${BASE}/games/:id`, async ({ params, request }) => {
@@ -262,9 +274,15 @@ export const handlers = [
     const body = (await request.json()) as GameInput;
     const bad = validateGameInput(body, false);
     if (bad) return bad;
-    Object.assign(g, Object.fromEntries(Object.entries(body).filter(([, v]) => v !== undefined)));
+    const { coverMediaId, ...fields } = body;
+    if (coverMediaId !== undefined) {
+      const m = coverMediaId ? g.media.find((x) => x.id === coverMediaId && x.kind === "cover") : null;
+      if (coverMediaId && (!m || settle(m).status !== "ready")) return err(422, "VALIDATION_ERROR", "The cover is not ready yet.");
+      g.coverMediaId = coverMediaId;
+    }
+    Object.assign(g, Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined)));
     persist();
-    return HttpResponse.json(toGameDetail(s, g, me.id));
+    return HttpResponse.json({ game: toGameDetail(s, g, me.id) });
   }),
 
   http.post(`${BASE}/games/:id/publish`, ({ params }) => {
@@ -276,15 +294,17 @@ export const handlers = [
     if (g.ownerId !== me.id) return forbidden();
     g.media.forEach(settle);
     const missing: string[] = [];
-    if (!g.title.trim()) missing.push("a title");
-    if (!g.media.some((m) => m.id === g.coverMediaId && m.status === "ready")) missing.push("a cover");
-    if (!g.media.some((m) => m.kind === "screenshot" && m.status === "ready")) missing.push("at least one screenshot");
-    if (!g.media.some((m) => m.kind === "build" && m.status === "ready")) missing.push("a build that finished processing");
-    if (missing.length) return err(422, "PUBLISH_REQUIREMENTS", `To publish you still need ${missing.join(", ")}.`);
+    const keys: string[] = [];
+    const need = (ok: boolean, key: string, text: string) => ok || (missing.push(text), keys.push(key));
+    need(!!g.title.trim(), "title", "a title");
+    need(g.media.some((m) => m.id === g.coverMediaId && m.status === "ready"), "cover", "a cover");
+    need(g.media.some((m) => m.kind === "screenshot" && m.status === "ready"), "screenshot", "at least one screenshot");
+    need(g.media.some((m) => m.kind === "build" && m.status === "ready"), "build", "a build that finished processing");
+    if (missing.length) return HttpResponse.json({ error: { code: "PUBLISH_REQUIREMENTS", message: `To publish you still need ${missing.join(", ")}.`, details: { missing: keys } } }, { status: 422 });
     g.status = "published";
     g.publishedAt ??= new Date().toISOString();
     persist();
-    return HttpResponse.json(toGameDetail(s, g, me.id));
+    return HttpResponse.json({ game: toGameDetail(s, g, me.id) });
   }),
 
   http.post(`${BASE}/games/:id/unpublish`, ({ params }) => {
@@ -296,7 +316,7 @@ export const handlers = [
     if (g.ownerId !== me.id && me.role !== "admin") return forbidden();
     g.status = "unpublished";
     persist();
-    return HttpResponse.json(toGameDetail(s, g, me.id));
+    return HttpResponse.json({ game: toGameDetail(s, g, me.id) });
   }),
 
   http.delete(`${BASE}/games/:id`, ({ params }) => {
@@ -334,10 +354,11 @@ export const handlers = [
     if (!me) return unauthorized();
     const g = findGame(s, String(params.id));
     if (!g || g.status !== "published") return notFound("Game not found");
+    if (g.ownerId === me.id) return selfAction("You can’t like your own game.");
     let karmaAwarded = 0;
     if (!s.gameLikes.some((l) => l.gameId === g.id && l.userId === me.id)) {
       s.gameLikes.push({ userId: me.id, gameId: g.id, createdAt: new Date().toISOString() });
-      if (g.ownerId !== me.id) karmaAwarded = awardKarma(s, { userId: me.id, reason: "like_game", refType: "game", refId: g.id });
+      karmaAwarded = awardKarma(s, { userId: me.id, reason: "like_game", refType: "game", refId: g.id });
     }
     persist();
     return HttpResponse.json({ liked: true, likesCount: gameStats(s, g).likesCount, karmaAwarded });
@@ -352,9 +373,9 @@ export const handlers = [
     if (!g) return notFound("Game not found");
     const had = s.gameLikes.length;
     s.gameLikes = s.gameLikes.filter((l) => !(l.gameId === g.id && l.userId === me.id));
-    if (had !== s.gameLikes.length) reverseKarma(s, me.id, "game", g.id, "like_game");
+    const reversed = had !== s.gameLikes.length ? reverseKarma(s, me.id, "game", g.id, "like_game") : 0;
     persist();
-    return HttpResponse.json({ liked: false, likesCount: gameStats(s, g).likesCount, karmaAwarded: 0 });
+    return HttpResponse.json({ liked: false, likesCount: gameStats(s, g).likesCount, karmaAwarded: -reversed });
   }),
 
   /* ------------------------------ reviews ------------------------------ */
@@ -364,7 +385,10 @@ export const handlers = [
     if (!g) return notFound("Game not found");
     const list = s.reviews.filter((r) => r.gameId === g.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     const page = paginate(list, request, 10);
-    return HttpResponse.json({ ...page, items: page.items.map((r) => toReview(s, r)) });
+    const distribution: Record<string, number> = { "1": 0, "2": 0, "3": 0, "4": 0, "5": 0 };
+    list.forEach((r) => (distribution[String(r.rating)] += 1));
+    const stats = gameStats(s, g);
+    return HttpResponse.json({ ...page, items: page.items.map((r) => toReview(s, r)), summary: { ratingAvg: stats.ratingAvg, ratingCount: stats.reviewsCount, distribution } });
   }),
 
   http.post(`${BASE}/games/:id/reviews`, async ({ params, request }) => {
@@ -374,7 +398,7 @@ export const handlers = [
     if (!me) return unauthorized();
     const g = findGame(s, String(params.id));
     if (!g || g.status !== "published") return notFound("Game not found");
-    if (g.ownerId === me.id) return forbidden("You cannot review your own game.");
+    if (g.ownerId === me.id) return selfAction("You can’t review your own game.");
     if (s.reviews.some((r) => r.gameId === g.id && r.userId === me.id)) return err(409, "REVIEW_EXISTS", "You already reviewed this game. Edit your review instead.");
     const body = (await request.json()) as { rating?: number; body?: string };
     if (!Number.isInteger(body.rating) || body.rating! < 1 || body.rating! > 5) return err(422, "VALIDATION_ERROR", "Rating must be 1 to 5 stars.");
@@ -384,7 +408,7 @@ export const handlers = [
     s.reviews.push(r);
     const karmaAwarded = r.body.length >= MIN_REVIEW_KARMA_LENGTH ? awardKarma(s, { userId: me.id, reason: "review", refType: "review", refId: r.id }) : 0;
     persist();
-    return HttpResponse.json({ ...toReview(s, r), karmaAwarded }, { status: 201 });
+    return HttpResponse.json({ review: toReview(s, r), karmaAwarded }, { status: 201 });
   }),
 
   http.patch(`${BASE}/reviews/:id`, async ({ params, request }) => {
@@ -401,8 +425,13 @@ export const handlers = [
     }
     if (body.body !== undefined) r.body = body.body.trim();
     r.updatedAt = new Date().toISOString();
+    // Karma follows the ≥ 20 characters rule: earned when a short review is expanded, reversed when shortened.
+    let karmaAwarded = 0;
+    const earned = s.karma.filter((k) => k.userId === r.userId && k.refId === r.id).reduce((n, k) => n + k.amount, 0) > 0;
+    if (r.body.length >= MIN_REVIEW_KARMA_LENGTH && !earned) karmaAwarded = awardKarma(s, { userId: r.userId, reason: "review", refType: "review", refId: r.id });
+    else if (r.body.length < MIN_REVIEW_KARMA_LENGTH && earned) karmaAwarded = -reverseKarma(s, r.userId, "review", r.id, "review");
     persist();
-    return HttpResponse.json(toReview(s, r));
+    return HttpResponse.json({ review: toReview(s, r), karmaAwarded });
   }),
 
   http.delete(`${BASE}/reviews/:id`, ({ params }) => {
@@ -413,9 +442,9 @@ export const handlers = [
     if (!r) return notFound("Review not found");
     if (r.userId !== me.id && me.role !== "admin") return forbidden();
     s.reviews = s.reviews.filter((x) => x.id !== r.id);
-    reverseKarma(s, r.userId, "review", r.id, "review");
+    const reversed = reverseKarma(s, r.userId, "review", r.id, "review");
     persist();
-    return new HttpResponse(null, { status: 204 });
+    return HttpResponse.json({ karmaAwarded: me.id === r.userId ? -reversed : 0 });
   }),
 
   /* ------------------------------ comments ------------------------------ */
@@ -424,18 +453,22 @@ export const handlers = [
     const me = currentUser(s);
     const g = findGame(s, String(params.id));
     if (!g) return notFound("Game not found");
+    const url = new URL(request.url);
+    const kind = url.searchParams.get("kind") ?? "all";
+    const sort = url.searchParams.get("sort") ?? "top";
     const all = s.comments.filter((c) => c.gameId === g.id);
+    const likes = (id: string) => s.commentLikes.filter((l) => l.commentId === id).length;
     // Soft-deleted comments stay as a placeholder only if they still have replies.
     const tops = all
-      .filter((c) => !c.parentId && (!c.deletedAt || all.some((r) => r.parentId === c.id && !r.deletedAt)))
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      .filter((c) => !c.parentId && (kind === "all" || c.kind === kind) && (!c.deletedAt || all.some((r) => r.parentId === c.id && !r.deletedAt)))
+      .sort((a, b) => (sort === "top" ? likes(b.id) - likes(a.id) || b.createdAt.localeCompare(a.createdAt) : b.createdAt.localeCompare(a.createdAt)));
     const page = paginate(tops, request, 10);
     return HttpResponse.json({
       ...page,
-      items: page.items.map((c) => ({
-        ...toComment(s, c, me?.id ?? null),
-        replies: all.filter((r) => r.parentId === c.id && !r.deletedAt).sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map((r) => toComment(s, r, me?.id ?? null)),
-      })),
+      items: page.items.map((c) => {
+        const replies = all.filter((r) => r.parentId === c.id && !r.deletedAt).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+        return { ...toComment(s, c, me?.id ?? null), replies: replies.map((r) => toComment(s, r, me?.id ?? null)), repliesCount: replies.length };
+      }),
     });
   }),
 
@@ -461,9 +494,10 @@ export const handlers = [
       createdAt: new Date().toISOString(),
     };
     s.comments.push(c);
+    // No karma for commenting on your own game.
     const karmaAwarded = g.ownerId === me.id ? 0 : awardKarma(s, { userId: me.id, reason: kind, refType: "comment", refId: c.id });
     persist();
-    return HttpResponse.json({ ...toComment(s, c, me.id), replies: [], karmaAwarded }, { status: 201 });
+    return HttpResponse.json({ comment: { ...toComment(s, c, me.id), replies: [], repliesCount: 0 }, karmaAwarded }, { status: 201 });
   }),
 
   http.delete(`${BASE}/comments/:id`, ({ params }) => {
@@ -472,11 +506,12 @@ export const handlers = [
     if (!me) return unauthorized();
     const c = s.comments.find((x) => x.id === params.id);
     if (!c) return notFound("Comment not found");
-    if (c.userId !== me.id && me.role !== "admin") return forbidden();
+    const owner = s.games.find((x) => x.id === c.gameId)?.ownerId;
+    if (c.userId !== me.id && owner !== me.id && me.role !== "admin") return forbidden();
     c.deletedAt = new Date().toISOString();
-    reverseKarma(s, c.userId, "comment", c.id, c.kind);
+    const reversed = reverseKarma(s, c.userId, "comment", c.id, c.kind);
     persist();
-    return new HttpResponse(null, { status: 204 });
+    return HttpResponse.json({ karmaAwarded: c.userId === me.id ? -reversed : 0 });
   }),
 
   http.put(`${BASE}/comments/:id/like`, async ({ params }) => {
@@ -486,10 +521,11 @@ export const handlers = [
     if (!me) return unauthorized();
     const c = s.comments.find((x) => x.id === params.id && !x.deletedAt);
     if (!c) return notFound("Comment not found");
+    if (c.userId === me.id) return selfAction("You can’t like your own comment.");
     let karmaAwarded = 0;
     if (!s.commentLikes.some((l) => l.commentId === c.id && l.userId === me.id)) {
       s.commentLikes.push({ userId: me.id, commentId: c.id, createdAt: new Date().toISOString() });
-      if (c.userId !== me.id) karmaAwarded = awardKarma(s, { userId: me.id, reason: "like_comment", refType: "comment", refId: c.id });
+      karmaAwarded = awardKarma(s, { userId: me.id, reason: "like_comment", refType: "comment", refId: c.id });
     }
     persist();
     return HttpResponse.json({ liked: true, likesCount: s.commentLikes.filter((l) => l.commentId === c.id).length, karmaAwarded });
@@ -504,9 +540,9 @@ export const handlers = [
     if (!c) return notFound("Comment not found");
     const had = s.commentLikes.length;
     s.commentLikes = s.commentLikes.filter((l) => !(l.commentId === c.id && l.userId === me.id));
-    if (had !== s.commentLikes.length) reverseKarma(s, me.id, "comment", c.id, "like_comment");
+    const reversed = had !== s.commentLikes.length ? reverseKarma(s, me.id, "comment", c.id, "like_comment") : 0;
     persist();
-    return HttpResponse.json({ liked: false, likesCount: s.commentLikes.filter((l) => l.commentId === c.id).length, karmaAwarded: 0 });
+    return HttpResponse.json({ liked: false, likesCount: s.commentLikes.filter((l) => l.commentId === c.id).length, karmaAwarded: -reversed });
   }),
 
   http.post(`${BASE}/comments/:id/accept`, ({ params }) => {
@@ -523,7 +559,23 @@ export const handlers = [
       if (c.userId !== me.id) awardKarma(s, { userId: c.userId, reason: "suggestion_accepted", refType: "comment", refId: c.id });
     }
     persist();
-    return HttpResponse.json(toComment(s, c, me.id));
+    return HttpResponse.json({ comment: toComment(s, c, me.id) });
+  }),
+
+  http.delete(`${BASE}/comments/:id/accept`, ({ params }) => {
+    const s = db();
+    const me = currentUser(s);
+    if (!me) return unauthorized();
+    const c = s.comments.find((x) => x.id === params.id && !x.deletedAt);
+    if (!c) return notFound("Comment not found");
+    const g = s.games.find((x) => x.id === c.gameId)!;
+    if (g.ownerId !== me.id) return forbidden("Only the game's creator can change this.");
+    if (c.acceptedAt) {
+      c.acceptedAt = null;
+      reverseKarma(s, c.userId, "comment", c.id, "suggestion_accepted");
+    }
+    persist();
+    return HttpResponse.json({ comment: toComment(s, c, me.id) });
   }),
 
   /* ------------------------- feed / leaderboard / search ------------------------- */
@@ -531,7 +583,7 @@ export const handlers = [
     await delay(60);
     const s = db();
     const me = currentUser(s);
-    return HttpResponse.json({ items: feedLists(s).buzzing.slice(0, 12).map((g) => toGame(s, g, me?.id ?? null, "buzzing")) });
+    return HttpResponse.json({ items: feedLists(s).buzzing.slice(0, 12).map((g) => ({ badge: "buzzing", game: toGame(s, g, me?.id ?? null) })) });
   }),
 
   http.get(`${BASE}/feed`, async ({ request }) => {
@@ -539,7 +591,7 @@ export const handlers = [
     const s = db();
     const me = currentUser(s);
     const page = paginate(mixedFeed(s), request, 12);
-    return HttpResponse.json({ ...page, items: page.items.map((x) => toGame(s, x.game, me?.id ?? null, x.badge)) });
+    return HttpResponse.json({ ...page, items: page.items.map((x) => ({ badge: x.badge, game: toGame(s, x.game, me?.id ?? null) })) });
   }),
 
   http.get(`${BASE}/leaderboard`, async ({ request }) => {
@@ -552,7 +604,8 @@ export const handlers = [
     const inPeriod = (t: string) => new Date(t).getTime() >= since;
     let rows: { score: number; game?: DbGame; user?: (typeof s.users)[number] }[] = [];
     if (type === "games") {
-      rows = s.games.filter((g) => g.status === "published").map((game) => ({ game, score: s.gameLikes.filter((l) => l.gameId === game.id && inPeriod(l.createdAt)).length }));
+      // games: engagement (likes, reviews, comments, downloads by others) within the period
+      rows = s.games.filter((g) => g.status === "published").map((game) => ({ game, score: engagement(s, game, since) }));
     } else if (type === "creators") {
       rows = s.users.map((user) => {
         const ids = new Set(s.games.filter((g) => g.ownerId === user.id && g.status === "published").map((g) => g.id));
@@ -565,8 +618,8 @@ export const handlers = [
       .filter((r) => r.score > 0)
       .sort((a, b) => b.score - a.score)
       .slice(0, 50)
-      .map((r, i) => ({ rank: i + 1, score: r.score, ...(r.game ? { game: toGame(s, r.game, me?.id ?? null) } : { user: userSummary(r.user!) }) }));
-    return HttpResponse.json({ items });
+      .map((r, i) => ({ rank: i + 1, score: r.score, ...(r.game ? { game: toGame(s, r.game, me?.id ?? null) } : { user: toUserCard(s, r.user!) }) }));
+    return HttpResponse.json({ type, period: url.searchParams.get("period") ?? "week", items });
   }),
 
   http.get(`${BASE}/search/suggest`, async ({ request }) => {
@@ -582,13 +635,13 @@ export const handlers = [
       .slice(0, 5)
       .map(({ g }) => {
         const tg = toGame(s, g, null);
-        return { id: tg.id, slug: tg.slug, title: tg.title, cover: tg.cover, tags: tg.tags };
+        return { id: tg.id, slug: tg.slug, title: tg.title, coverUrl: tg.coverUrl };
       });
     const users = s.users
       .map((u) => ({ u, sc: textScore(q, u.username, u.displayName) }))
       .filter((x) => x.sc >= MATCH_THRESHOLD)
       .sort((a, b) => b.sc - a.sc)
-      .slice(0, 4)
+      .slice(0, 5)
       .map((x) => userSummary(x.u));
     return HttpResponse.json({ games, users });
   }),
@@ -599,6 +652,7 @@ export const handlers = [
     const me = currentUser(s);
     const url = new URL(request.url);
     const q = (url.searchParams.get("q") ?? "").trim();
+    if (!q) return err(422, "VALIDATION_ERROR", "q is required.");
     const type = url.searchParams.get("type") ?? "games";
     const tags = (url.searchParams.get("tags") ?? "").split(",").filter(Boolean);
     if (type === "users") {
@@ -606,22 +660,22 @@ export const handlers = [
         .map((u) => ({ u, sc: q ? textScore(q, u.username, u.displayName) : 0.5 }))
         .filter((x) => x.sc >= MATCH_THRESHOLD)
         .sort((a, b) => b.sc - a.sc)
-        .map(({ u }) => ({ ...userSummary(u), bio: u.bio, gamesCount: s.games.filter((g) => g.ownerId === u.id && g.status === "published").length }));
+        .map(({ u }) => toUserCard(s, u));
       return HttpResponse.json(paginate(rows, request, 12));
     }
     const matching = s.games
       .filter((g) => g.status === "published")
       .map((g) => ({ g, sc: q ? Math.max(textScore(q, g.title), g.tags.some((t) => t === q.toLowerCase()) ? 1 : 0, textScore(q, g.shortDescription) * 0.6) : 0.5 }))
       .filter((x) => x.sc >= MATCH_THRESHOLD);
-    const facetCounts = new Map<string, number>();
-    matching.forEach((x) => x.g.tags.forEach((t) => facetCounts.set(t, (facetCounts.get(t) ?? 0) + 1)));
     const filtered = matching.filter((x) => tags.every((t) => x.g.tags.includes(t))).sort((a, b) => b.sc - a.sc);
     const page = paginate(filtered, request, 12);
-    return HttpResponse.json({
-      ...page,
-      items: page.items.map((x) => toGame(s, x.g, me?.id ?? null)),
-      facets: { tags: [...facetCounts].map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count) },
-    });
+    return HttpResponse.json({ ...page, items: page.items.map((x) => toGame(s, x.g, me?.id ?? null)) });
+  }),
+
+  http.get(`${BASE}/tags/popular`, () => {
+    const counts = new Map<string, number>();
+    db().games.filter((g) => g.status === "published").forEach((g) => g.tags.forEach((t) => counts.set(t, (counts.get(t) ?? 0) + 1)));
+    return HttpResponse.json({ items: [...counts].map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count).slice(0, 20) });
   }),
 
   http.post(`${BASE}/reports`, async ({ request }) => {
@@ -629,19 +683,20 @@ export const handlers = [
     const me = currentUser(s);
     if (!me) return unauthorized();
     const body = (await request.json()) as { targetType?: string; targetId?: string; reason?: string };
-    if (!body.targetType || !body.targetId || !(body.reason ?? "").trim()) return err(422, "VALIDATION_ERROR", "Tell us what is wrong.");
+    if (!body.targetType || !body.targetId || (body.reason ?? "").trim().length < 3) return err(422, "VALIDATION_ERROR", "Tell us what is wrong (at least 3 characters).");
     const id = nextId("rep");
     s.reports.push({ id, reporterId: me.id, targetType: body.targetType, targetId: body.targetId, reason: body.reason!, createdAt: new Date().toISOString() });
     persist();
-    return HttpResponse.json({ id }, { status: 201 });
+    return HttpResponse.json({ report: { id } }, { status: 201 });
   }),
 
   /* ------------------------------- uploads ------------------------------- */
   http.post(`${BASE}/games/:id/uploads`, async ({ params, request }) => uploadInit(String(params.id), request)),
-  // Avatars are not game-bound. Not in the plan's contract: see docs/requests/agent2-avatar-upload.md
+  // Avatars are not game-bound (Agent 3: POST /users/me/uploads).
   http.post(`${BASE}/users/me/uploads`, async ({ request }) => uploadInit(null, request)),
 
-  http.post("*/mock-storage/:uploadId", () => new HttpResponse(null, { status: 204 })),
+  // Stand-in for the presigned PUT target (R2/MinIO).
+  http.put("*/mock-storage/:uploadId", () => new HttpResponse(null, { status: 200 })),
 
   http.post(`${BASE}/uploads/:id/complete`, ({ params }) => {
     const s = db();
@@ -652,7 +707,7 @@ export const handlers = [
     m.status = "scanning";
     m.pipelineStartedAt = Date.now();
     persist();
-    return HttpResponse.json({ uploadId: String(params.id), mediaId: m.id, status: m.status });
+    return HttpResponse.json({ media: mediaItem(m) });
   }),
 
   http.get(`${BASE}/uploads/:id`, ({ params }) => {
@@ -662,9 +717,7 @@ export const handlers = [
     if (!up || !m) return notFound("Upload not found");
     settle(m);
     persist();
-    return HttpResponse.json({
-      uploadId: String(params.id), mediaId: m.id, status: m.status, ...(m.status === "rejected" ? { reason: "Malware detected by the scanner." } : {}),
-    });
+    return HttpResponse.json({ media: mediaItem(m) });
   }),
 
   http.delete(`${BASE}/media/:id`, ({ params }) => {
@@ -691,13 +744,13 @@ export const handlers = [
     const g = findGame(s, String(params.id));
     if (!g) return notFound("Game not found");
     if (g.ownerId !== me.id) return forbidden();
-    const body = (await request.json()) as { order: string[] };
-    body.order.forEach((id, i) => {
-      const m = g.media.find((x) => x.id === id);
+    const body = (await request.json()) as { mediaIds: string[] };
+    body.mediaIds.forEach((id, i) => {
+      const m = g.media.find((x) => x.id === id && x.kind === "screenshot");
       if (m) m.sortOrder = i;
     });
     persist();
-    return new HttpResponse(null, { status: 204 });
+    return HttpResponse.json({ items: g.media.filter((m) => m.kind === "screenshot").sort((a, b) => a.sortOrder - b.sortOrder).map(mediaItem) });
   }),
 
   /* ------------------------------- dev helper ------------------------------- */
@@ -749,27 +802,33 @@ async function uploadInit(gameId: string | null, request: Request) {
   const body = (await request.json()) as { kind?: string; filename?: string; size?: number; mime?: string };
   const kind = body.kind as DbMedia["kind"];
   const limit = LIMITS[kind ?? ""];
-  if (!limit) return err(422, "VALIDATION_ERROR", "Unknown upload kind.");
+  if (!limit) return err(422, "INVALID_UPLOAD", "Unknown upload kind.");
   const g = gameId ? findGame(s, gameId) : null;
-  if (gameId && !g) return notFound("Game not found");
+  if (gameId && !g) return err(404, "GAME_NOT_FOUND", "Game not found");
   if (g && g.ownerId !== me.id) return forbidden();
-  if ((body.size ?? 0) > limit.max) return err(413, "FILE_TOO_LARGE", `That file is too large. The limit for this type is ${limit.label}.`);
-  if (!limit.mimes.test(body.mime ?? "") && !(kind === "build" && /\.(zip|exe|dmg|apk|appimage|tar\.gz|tgz)$/i.test(body.filename ?? "")))
-    return err(415, "UNSUPPORTED_TYPE", "That file type is not supported.");
-  const uploadId = nextId("up");
+  if (!gameId && kind !== "avatar") return err(422, "INVALID_UPLOAD", "Only avatars can be uploaded here.");
+  if (gameId && kind === "avatar") return err(422, "INVALID_UPLOAD", "Avatars are uploaded for your profile.");
+  if ((body.size ?? 0) > limit.max) return err(422, "INVALID_UPLOAD", `That file is too large. The limit for this type is ${limit.label}.`);
+  if (!limit.ext.test(body.filename ?? "")) return err(422, "INVALID_UPLOAD", "That file type is not supported.");
+  if (g && kind === "screenshot" && g.media.filter((m) => m.kind === "screenshot").length >= 12) return err(422, "UPLOAD_LIMIT_REACHED", "A game can have at most 12 screenshots.");
+  if (g && kind === "build" && g.media.filter((m) => m.kind === "build").length >= 8) return err(422, "UPLOAD_LIMIT_REACHED", "A game can have at most 8 builds.");
+  const id = nextId("m");
   const media: DbMedia = {
-    id: nextId("m"), gameId: g?.id ?? null, kind, originalName: body.filename ?? "file", mime: body.mime ?? "application/octet-stream",
-    sizeBytes: body.size ?? 0, status: "uploading", seed: `${uploadId}-${body.filename}`, sortOrder: 0,
+    id, gameId: g?.id ?? null, kind, originalName: body.filename ?? "file", mime: body.mime ?? "application/octet-stream",
+    sizeBytes: body.size ?? 0, status: "uploading", seed: `${id}-${body.filename}`, sortOrder: 0,
   };
   if (g) {
-    if (kind === "cover") g.media = g.media.filter((m) => m.kind !== "cover");
-    if (kind === "video") g.media = g.media.filter((m) => m.kind !== "video");
+    // A new cover or video replaces the old one.
+    if (kind === "cover" || kind === "video") g.media = g.media.filter((m) => m.kind !== kind);
     media.sortOrder = g.media.filter((m) => m.kind === kind).length;
     g.media.push(media);
-    if (kind === "cover") g.coverMediaId = media.id;
   } else avatarMedia.set(media.id, media);
+  const uploadId = id;
   s.uploads[uploadId] = { mediaId: media.id, gameId: g?.id ?? "me" };
   persist();
-  return HttpResponse.json({ uploadId, url: `/mock-storage/${uploadId}`, fields: { key: `uploads/${media.id}` }, mediaId: media.id }, { status: 201 });
+  return HttpResponse.json(
+    { uploadId, url: `/mock-storage/${uploadId}`, method: "PUT", headers: {}, fields: {}, expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(), media: mediaItem(media) },
+    { status: 201 },
+  );
 }
 

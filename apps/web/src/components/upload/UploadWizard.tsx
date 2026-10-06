@@ -37,7 +37,7 @@ export function UploadWizard({ slug: initialSlug }: { slug?: string }) {
     refetchInterval: (q) => {
       const g = q.state.data;
       if (!g) return false;
-      const all = [...g.builds, ...g.screenshots, ...(g.video ? [g.video] : []), ...(g.coverMedia ? [g.coverMedia] : [])];
+      const all = [...g.builds, ...g.screenshots, ...(g.video ? [g.video] : []), ...(g.cover ? [g.cover] : [])];
       return all.some((m) => m.status === "uploading" || m.status === "scanning" || m.status === "processing") ? 1500 : false;
     },
     staleTime: 0,
@@ -151,7 +151,7 @@ export function UploadWizard({ slug: initialSlug }: { slug?: string }) {
             pending={uploads.pending}
             onDismiss={uploads.dismiss}
             onChanged={refresh}
-            onFiles={(kind, files) => uploads.start(kind, files, kind === "cover" ? { replaceMediaId: game.coverMedia?.id } : kind === "video" ? { replaceMediaId: game.video?.id } : undefined)}
+            onFiles={(kind, files) => uploads.start(kind, files)}
           />
         )}
         {step === 3 && game && <PreviewStep game={game as GameDetail} />}

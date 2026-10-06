@@ -8,8 +8,8 @@ const MOCKING = process.env.NEXT_PUBLIC_API_MOCKING === "enabled";
  * endpoint downloads the file. Service-worker mocks cannot intercept navigations, so in
  * mock mode we fetch the stub and save the blob instead.
  */
-export async function startDownload(gameId: string, filename: string): Promise<void> {
-  const url = `${apiBase()}/games/${gameId}/download`;
+export async function startDownload(gameId: string, filename: string, mediaId?: string): Promise<void> {
+  const url = `${apiBase()}/games/${gameId}/download${mediaId ? `?mediaId=${encodeURIComponent(mediaId)}` : ""}`;
   if (!MOCKING) {
     window.location.assign(url);
     return;

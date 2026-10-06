@@ -82,7 +82,7 @@ function Row({ entry, unit }: { entry: LeaderboardEntry; unit: string }) {
       <RankMedal rank={entry.rank} />
       {entry.game ? (
         <>
-          <img src={entry.game.cover?.thumb} alt="" width={96} height={54} className="hidden h-[54px] w-24 rounded-md object-cover sm:block" />
+          <img src={entry.game.coverUrl ?? undefined} alt="" width={96} height={54} className="hidden h-[54px] w-24 rounded-md object-cover sm:block" />
           <div className="min-w-0 flex-1">
             <Link href={`/games/${entry.game.slug}`} className="block truncate font-heading text-lg font-semibold hover:underline">
               {entry.game.title}

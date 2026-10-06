@@ -9,7 +9,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const game = await getGameServer(slug);
   if (!game || game.status !== "published") return { title: "Game", robots: { index: false } };
-  const image = game.cover?.full ?? game.cover?.card;
+  const image = game.cover?.variants.full ?? game.coverUrl ?? undefined;
   const description = game.shortDescription || game.description.slice(0, 160);
   return {
     title: game.title,
@@ -39,7 +39,7 @@ export default async function Page({ params }: Props) {
           name: game.title,
           description: game.shortDescription,
           url: `${SITE_URL}/games/${game.slug}`,
-          image: game.cover?.full,
+          image: game.cover?.variants.full ?? game.coverUrl,
           genre: game.tags,
           gamePlatform: game.platforms,
           author: { "@type": "Person", name: game.owner.displayName },
