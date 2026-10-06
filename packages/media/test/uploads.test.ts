@@ -6,7 +6,7 @@ beforeAll(async () => {
   env = await createEnv();
 });
 afterAll(async () => {
-  await env.app.close();
+  await env.close();
 });
 
 const body = (kind: string, filename: string, mime: string, size = 100) => ({

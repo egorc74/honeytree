@@ -8,10 +8,12 @@
     "dev": "tsx watch src/main.ts",
     "start": "tsx src/main.ts",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "check:schema": "tsx src/check-schema.ts"
   },
   "dependencies": {
     "@honeytree/media": "workspace:*",
+    "@honeytree/ranking": "workspace:*",
     "bullmq": "^6.3.11",
     "ioredis": "^6.0.0",
     "pg": "^8.23.1",

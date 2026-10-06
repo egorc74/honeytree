@@ -1,8 +1,7 @@
-import { PGlite } from '@electric-sql/pglite';
 import Fastify from 'fastify';
 import { mediaPlugin } from '../src';
 import type { AuthUser } from '../src/core';
-import { MemoryQueue, MemoryStorage, TEST_SCHEMA_SQL } from '../src/testing';
+import { MemoryQueue, MemoryStorage, openTestDb } from '../src/testing';
 
 export const ZIP = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.alloc(100)]);
 export const PNG = Buffer.concat([
@@ -11,8 +10,8 @@ export const PNG = Buffer.concat([
 ]);
 
 export async function createEnv() {
-  const db = new PGlite();
-  await db.exec(TEST_SCHEMA_SQL);
+  const testDb = await openTestDb();
+  const db = testDb.db;
   const storage = new MemoryStorage();
   const queue = new MemoryQueue();
 
@@ -79,6 +78,10 @@ export async function createEnv() {
 
   return {
     db,
+    close: async () => {
+      await app.close();
+      await testDb.close();
+    },
     app,
     storage,
     queue,

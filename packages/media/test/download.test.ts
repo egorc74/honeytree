@@ -18,7 +18,7 @@ beforeAll(async () => {
   await env.db.query(`UPDATE media SET status='ready' WHERE id=$1`, [build]);
 });
 afterAll(async () => {
-  await env.app.close();
+  await env.close();
 });
 
 const download = (opts: { who?: string; ip?: string; query?: string; gameId?: string } = {}) =>

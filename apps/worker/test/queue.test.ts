@@ -95,7 +95,7 @@ maybe('BullMQ wiring', () => {
     await scheduleMaintenance(q);
     await scheduleMaintenance(q);
     const schedulers = await q.getJobSchedulers();
-    expect(schedulers.map((s) => s.name)).toEqual(Object.values(MAINTENANCE_JOBS).sort());
+    expect(schedulers.map((s) => s.name).sort()).toEqual(Object.values(MAINTENANCE_JOBS).sort());
     await q.close();
   });
 });
