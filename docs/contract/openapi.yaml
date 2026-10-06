@@ -1,0 +1,815 @@
+openapi: 3.0.3
+info:
+  title: Honeytree API
+  version: 1.0.0
+  description: |
+    Contract between the Honeytree API (Agent 1), the web app (Agent 2) and the
+    media module (Agent 3). All paths are prefixed with `/api/v1`.
+
+    ## Conventions
+    - **Auth**: httpOnly session cookie `ht_session` (set by register/login). Endpoints marked
+      `security: [cookieAuth]` need it (401 `UNAUTHENTICATED` otherwise). Others accept it optionally,
+      and use it to fill `likedByMe`.
+    - **CSRF**: the API rejects non-GET requests whose `Origin` header is not an allowed web origin.
+      Send requests with `credentials: 'include'`.
+    - **Errors**: `{ "error": { "code": "STRING", "message": "…", "details": … } }`.
+    - **Pagination**: cursor based. `?cursor=&limit=` → `{ items, nextCursor }` (`nextCursor` is `null` on the last page).
+      Treat cursors as opaque strings.
+    - **`likedByMe`** is present on every game and comment (`false` when anonymous).
+    - **`karmaAwarded`** is returned by every write endpoint that can earn or lose karma. Positive = earned, negative =
+      reversed, `0` = nothing (own content, daily cap, text too short). Use it for the "+1 karma 🍯" toast.
+    - **Text** (`body`, `description`, …) is plain Markdown. The API strips raw HTML on input; the web app must render
+      Markdown with HTML disabled.
+    - **Media URLs** are absolute and public. Build files have `url: null`; use `GET /games/{id}/download` (Agent 3).
+    - **Cover / avatar** are set after the upload is `ready` via `PATCH /games/{id}` `{coverMediaId}` and
+      `PATCH /users/me` `{avatarMediaId}`.
+
+    ## Karma rules (implemented in the API)
+    like game +1 · like comment +1 · comment +2 · suggestion +3 · review (body ≥ 20 chars) +3 ·
+    suggestion accepted +10 (to the suggestion's author). The *actor* earns karma. Undoing reverses it.
+    No karma on your own games/comments. Daily caps: 50 from likes, 100 total.
+
+    ## "Likes received" (profile stat)
+    Likes on the user's games **plus** likes on the user's comments (self-likes are impossible/ignored).
+    Creators cannot like or review their own games (`403 SELF_ACTION`).
+servers:
+  - url: http://localhost:4000/api/v1
+security: []
+tags:
+  - name: Auth
+  - name: Users
+  - name: Games
+  - name: Social
+  - name: Feed
+  - name: Discovery
+  - name: Moderation
+  - name: Media (Agent 3)
+
+paths:
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Create an account and start a session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, email, password]
+              properties:
+                username: { type: string, pattern: '^[a-z0-9_]{3,24}$', description: 'Lower-cased by the server' }
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8, maxLength: 128 }
+                displayName: { type: string, maxLength: 40 }
+      responses:
+        '201': { description: 'Created', content: { application/json: { schema: { type: object, properties: { user: { $ref: '#/components/schemas/Me' } } } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Validation' }
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in with email or username
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier, password]
+              properties:
+                identifier: { type: string, description: 'Email or username' }
+                password: { type: string }
+      responses:
+        '200': { description: 'OK', content: { application/json: { schema: { type: object, properties: { user: { $ref: '#/components/schemas/Me' } } } } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /auth/logout:
+    post:
+      summary: Log out
+      tags: [Auth]
+      responses: { '204': { description: 'Logged out' } }
+  /auth/me:
+    get:
+      summary: Current user
+      tags: [Auth]
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200': { description: 'OK', content: { application/json: { schema: { type: object, properties: { user: { $ref: '#/components/schemas/Me' } } } } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /users/me:
+    patch:
+      tags: [Users]
+      security: [{ cookieAuth: [] }]
+      summary: Edit own profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                displayName: { type: string, maxLength: 40 }
+                bio: { type: string, maxLength: 500 }
+                links: { type: array, maxItems: 5, items: { $ref: '#/components/schemas/Link' } }
+                avatarMediaId: { type: string, format: uuid, nullable: true, description: 'A `ready` media of kind `avatar` owned by you' }
+      responses:
+        '200': { description: 'OK', content: { application/json: { schema: { type: object, properties: { user: { $ref: '#/components/schemas/UserProfile' } } } } } }
+        '422': { $ref: '#/components/responses/Validation' }
+  /users/{username}:
+    get:
+      tags: [Users]
+      summary: Profile with stats
+      parameters: [{ $ref: '#/components/parameters/Username' }]
+      responses:
+        '200': { description: 'OK', content: { application/json: { schema: { type: object, properties: { user: { $ref: '#/components/schemas/UserProfile' } } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /users/{username}/games:
+    get:
+      tags: [Users]
+      summary: Games of a user
+      description: Published games only, except when `status` is requested by the user themself.
+      parameters:
+        - { $ref: '#/components/parameters/Username' }
+        - { $ref: '#/components/parameters/Cursor' }
+        - { $ref: '#/components/parameters/Limit' }
+        - { name: status, in: query, schema: { type: string, enum: [published, draft, unpublished, all], default: published }, description: 'Non-published values are honoured only for your own profile' }
+      responses:
+        '200': { description: 'OK', content: { application/json: { schema: { $ref: '#/components/schemas/GamePage' } } } }
+  /users/{username}/reviews:
+    get:
+      tags: [Users]
+      summary: Reviews written by a user
+      parameters:
+        - { $ref: '#/components/parameters/Username' }
+        - { $ref: '#/components/parameters/Cursor' }
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/ReviewWithGame' } }
+                  nextCursor: { type: string, nullable: true }
+  /users/{username}/activity:
+    get:
+      tags: [Users]
+      summary: Recent public activity (last 30 items, no pagination)
+      parameters: [{ $ref: '#/components/parameters/Username' }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/ActivityItem' } }
+
+  /games:
+    post:
+      tags: [Games]
+      security: [{ cookieAuth: [] }]
+      summary: Create a draft game
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/GameInput' } } }
+      responses:
+        '201': { description: 'Created', content: { application/json: { schema: { type: object, properties: { game: { $ref: '#/components/schemas/Game' } } } } } }
+        '422': { $ref: '#/components/responses/Validation' }
+  /games/{idOrSlug}:
+    get:
+      tags: [Games]
+      summary: Game page data
+      description: Drafts/unpublished games are visible to their owner (and admins) only; everyone else gets 404.
+      parameters: [{ name: idOrSlug, in: path, required: true, schema: { type: string }, description: 'Slug or UUID. PATCH and DELETE accept the UUID only.' }]
+      responses:
+        '200': { description: 'OK', content: { application/json: { schema: { type: object, properties: { game: { $ref: '#/components/schemas/Game' } } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Games]
+      security: [{ cookieAuth: [] }]
+      summary: Edit a game (owner only)
+      parameters: [{ name: idOrSlug, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: '#/components/schemas/GameInputPartial' }
+                - type: object
+                  properties:
+                    coverMediaId: { type: string, format: uuid, nullable: true, description: 'A `ready` media of kind `cover` of this game' }
+      responses:
+        '200': { description: 'OK', content: { application/json: { schema: { type: object, properties: { game: { $ref: '#/components/schemas/Game' } } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Games]
+      security: [{ cookieAuth: [] }]
+      summary: Delete a game (owner only)
+      parameters: [{ name: idOrSlug, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '204': { description: 'Deleted' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /games/{id}/publish:
+    post:
+      tags: [Games]
+      security: [{ cookieAuth: [] }]
+      summary: Publish a draft/unpublished game
+      description: |
+        Requires title, a cover, ≥ 1 `ready` screenshot and ≥ 1 `ready` build. Otherwise 422 `PUBLISH_REQUIREMENTS`
+        with `details.missing` ⊂ `["title","cover","screenshot","build"]`.
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { description: 'OK', content: { application/json: { schema: { type: object, properties: { game: { $ref: '#/components/schemas/Game' } } } } } }
+        '422': { $ref: '#/components/responses/Validation' }
+  /games/{id}/unpublish:
+    post:
+      summary: Unpublish a game
+      tags: [Games]
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { description: 'OK', content: { application/json: { schema: { type: object, properties: { game: { $ref: '#/components/schemas/Game' } } } } } }
+
+  /games/{id}/like:
+    put:
+      tags: [Social]
+      security: [{ cookieAuth: [] }]
+      summary: Like a game (idempotent)
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { $ref: '#/components/responses/LikeResult' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [Social]
+      security: [{ cookieAuth: [] }]
+      summary: Remove a like (idempotent, reverses karma)
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { $ref: '#/components/responses/LikeResult' }
+  /games/{id}/reviews:
+    get:
+      summary: List reviews with rating summary
+      tags: [Social]
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+        - { $ref: '#/components/parameters/Cursor' }
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/Review' } }
+                  nextCursor: { type: string, nullable: true }
+                  summary: { $ref: '#/components/schemas/RatingSummary' }
+    post:
+      tags: [Social]
+      security: [{ cookieAuth: [] }]
+      summary: Review a game (one per user; creators cannot review their own game)
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rating]
+              properties:
+                rating: { type: integer, minimum: 1, maximum: 5 }
+                body: { type: string, maxLength: 4000, description: 'Karma is earned only when ≥ 20 characters' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  review: { $ref: '#/components/schemas/Review' }
+                  karmaAwarded: { type: integer }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /reviews/{id}:
+    patch:
+      summary: Edit own review
+      tags: [Social]
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                rating: { type: integer, minimum: 1, maximum: 5 }
+                body: { type: string, maxLength: 4000 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  review: { $ref: '#/components/schemas/Review' }
+                  karmaAwarded: { type: integer }
+    delete:
+      summary: Delete a review (author or admin)
+      tags: [Social]
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { description: 'Deleted', content: { application/json: { schema: { type: object, properties: { karmaAwarded: { type: integer } } } } } }
+  /games/{id}/comments:
+    get:
+      tags: [Social]
+      summary: Top-level comments, each with all its replies (oldest first, max 50 per thread)
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+        - { $ref: '#/components/parameters/Cursor' }
+        - { $ref: '#/components/parameters/Limit' }
+        - { name: kind, in: query, schema: { type: string, enum: [all, comment, suggestion], default: all } }
+        - { name: sort, in: query, schema: { type: string, enum: [top, new], default: top }, description: '`top` = most liked first' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/Comment' } }
+                  nextCursor: { type: string, nullable: true }
+    post:
+      summary: Write a comment, reply or suggestion
+      tags: [Social]
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string, minLength: 1, maxLength: 2000 }
+                kind: { type: string, enum: [comment, suggestion], default: comment, description: 'Replies must be `comment`' }
+                parentId: { type: string, format: uuid, description: 'A top-level comment of the same game (one level only)' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  comment: { $ref: '#/components/schemas/Comment' }
+                  karmaAwarded: { type: integer }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Validation' }
+  /comments/{id}:
+    delete:
+      tags: [Social]
+      security: [{ cookieAuth: [] }]
+      summary: Soft-delete a comment (author, the game's creator, or admin)
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { description: 'Deleted', content: { application/json: { schema: { type: object, properties: { karmaAwarded: { type: integer } } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /comments/{id}/like:
+    put:
+      summary: Like a comment (idempotent)
+      tags: [Social]
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses: { '200': { $ref: '#/components/responses/LikeResult' } }
+    delete:
+      summary: Remove a comment like (idempotent)
+      tags: [Social]
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses: { '200': { $ref: '#/components/responses/LikeResult' } }
+  /comments/{id}/accept:
+    post:
+      tags: [Social]
+      security: [{ cookieAuth: [] }]
+      summary: The game's creator accepts a suggestion (+10 karma to its author)
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { description: 'OK', content: { application/json: { schema: { type: object, properties: { comment: { $ref: '#/components/schemas/Comment' } } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Validation' }
+    delete:
+      tags: [Social]
+      security: [{ cookieAuth: [] }]
+      summary: Un-accept a suggestion (reverses the karma)
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { description: 'OK', content: { application/json: { schema: { type: object, properties: { comment: { $ref: '#/components/schemas/Comment' } } } } } }
+
+  /feed:
+    get:
+      tags: [Feed]
+      summary: Mixed feed (Buzzing / Fresh / Sweetest interleaved)
+      description: |
+        Order is Buzzing, Fresh, Sweetest, Fresh, Buzzing, Sweetest, … with no duplicates, then older games newest-first.
+        Each item carries the badge of the list it came from (`null` for the plain tail). Reads `game_scores`;
+        falls back to newest-first when scores do not exist yet. The feed is capped at 500 items.
+      parameters: [{ $ref: '#/components/parameters/Cursor' }, { $ref: '#/components/parameters/Limit' }]
+      responses:
+        '200': { description: 'OK', content: { application/json: { schema: { $ref: '#/components/schemas/FeedPage' } } } }
+  /feed/buzzing:
+    get:
+      tags: [Feed]
+      summary: Carousel of rising games (default 12)
+      parameters: [{ name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 24, default: 12 } }]
+      responses:
+        '200': { description: 'OK', content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/FeedItem' } } } } } } }
+  /leaderboard:
+    get:
+      tags: [Feed]
+      summary: Leaderboards (cached 5 minutes)
+      parameters:
+        - { name: type, in: query, required: true, schema: { type: string, enum: [games, creators, karma] } }
+        - { name: period, in: query, schema: { type: string, enum: [week, month, all], default: week } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  type: { type: string }
+                  period: { type: string }
+                  items: { type: array, items: { $ref: '#/components/schemas/LeaderboardEntry' } }
+  /search:
+    get:
+      tags: [Discovery]
+      summary: Full search (typo tolerant)
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string, minLength: 1, maxLength: 80 } }
+        - { name: type, in: query, schema: { type: string, enum: [games, users], default: games } }
+        - { name: tags, in: query, schema: { type: string }, description: 'Comma separated; games must have all of them' }
+        - { $ref: '#/components/parameters/Cursor' }
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        '200':
+          description: '`items` are `GameSummary` for type=games, `UserCard` for type=users'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { oneOf: [{ $ref: '#/components/schemas/GameSummary' }, { $ref: '#/components/schemas/UserCard' }] } }
+                  nextCursor: { type: string, nullable: true }
+  /search/suggest:
+    get:
+      tags: [Discovery]
+      summary: Autocomplete (max 5 games + 5 users)
+      parameters: [{ name: q, in: query, required: true, schema: { type: string } }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  games: { type: array, items: { type: object, properties: { id: { type: string }, slug: { type: string }, title: { type: string }, coverUrl: { type: string, nullable: true } } } }
+                  users: { type: array, items: { $ref: '#/components/schemas/UserSummary' } }
+  /tags/popular:
+    get:
+      tags: [Discovery]
+      summary: Most used tags on published games (for filters)
+      responses:
+        '200': { description: 'OK', content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { type: object, properties: { tag: { type: string }, count: { type: integer } } } } } } } } }
+
+  /reports:
+    post:
+      summary: Report a game, comment, review or user
+      tags: [Moderation]
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [targetType, targetId, reason]
+              properties:
+                targetType: { type: string, enum: [game, comment, review, user] }
+                targetId: { type: string, format: uuid }
+                reason: { type: string, minLength: 3, maxLength: 500 }
+      responses:
+        '201': { description: 'Created', content: { application/json: { schema: { type: object, properties: { report: { type: object, properties: { id: { type: string } } } } } } } }
+  /admin/reports:
+    get:
+      summary: List reports
+      tags: [Moderation]
+      security: [{ cookieAuth: [] }]
+      description: Admin only
+      parameters: [{ name: status, in: query, schema: { type: string, enum: [open, resolved], default: open } }, { $ref: '#/components/parameters/Cursor' }, { $ref: '#/components/parameters/Limit' }]
+      responses: { '200': { description: 'OK' } }
+  /admin/reports/{id}/resolve:
+    post:
+      summary: Resolve a report
+      tags: [Moderation]
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses: { '200': { description: 'OK' } }
+  /admin/games/{id}/remove:
+    post:
+      tags: [Moderation]
+      security: [{ cookieAuth: [] }]
+      summary: Set a game's status to `removed` (hidden everywhere)
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses: { '200': { description: 'OK' } }
+  /admin/games/{id}/restore:
+    post:
+      tags: [Moderation]
+      security: [{ cookieAuth: [] }]
+      summary: Move a removed game back to `unpublished`
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses: { '200': { description: 'OK' } }
+
+  # ---------------------------------------------------------------- Agent 3 (documented here for completeness)
+  /games/{id}/uploads:
+    post:
+      tags: [Media (Agent 3)]
+      summary: Start an upload (presigned)
+      description: Implemented by Agent 3 in `apps/api/src/modules/media`.
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses: { '200': { description: 'OK' } }
+  /uploads/{id}/complete:
+    post:
+      summary: Finish an upload
+      tags: [Media (Agent 3)]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses: { '200': { description: 'OK' } }
+  /uploads/{id}:
+    get:
+      summary: Upload / processing status
+      tags: [Media (Agent 3)]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses: { '200': { description: 'OK' } }
+  /media/{id}:
+    delete:
+      summary: Delete a media file
+      tags: [Media (Agent 3)]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses: { '204': { description: 'Deleted' } }
+  /games/{id}/media/order:
+    patch:
+      summary: Reorder screenshots
+      tags: [Media (Agent 3)]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses: { '200': { description: 'OK' } }
+  /games/{id}/download:
+    get:
+      tags: [Media (Agent 3)]
+      summary: Records the download and 302-redirects to a short-lived presigned URL
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses: { '302': { description: 'Redirect' } }
+
+components:
+  securitySchemes:
+    cookieAuth: { type: apiKey, in: cookie, name: ht_session }
+
+  parameters:
+    Id: { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    Username: { name: username, in: path, required: true, schema: { type: string } }
+    Cursor: { name: cursor, in: query, schema: { type: string }, description: 'Opaque cursor from `nextCursor`' }
+    Limit: { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+
+  responses:
+    Unauthenticated: { description: 'Not logged in / bad credentials', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Forbidden: { description: 'Not allowed (`FORBIDDEN`, `SELF_ACTION`)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    NotFound: { description: 'Not found', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Conflict: { description: 'Already exists', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Validation: { description: 'Invalid input (`VALIDATION_ERROR`, `PUBLISH_REQUIREMENTS`)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    RateLimited: { description: 'Too many requests', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    LikeResult:
+      description: Current like state
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              liked: { type: boolean }
+              likesCount: { type: integer }
+              karmaAwarded: { type: integer }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string, example: VALIDATION_ERROR }
+            message: { type: string }
+            details: {}
+    Link:
+      type: object
+      required: [label, url]
+      properties:
+        label: { type: string, maxLength: 30 }
+        url: { type: string, format: uri }
+    UserSummary:
+      type: object
+      required: [id, username, displayName, avatarUrl]
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        displayName: { type: string }
+        avatarUrl: { type: string, nullable: true }
+    UserStats:
+      type: object
+      properties:
+        likesReceived: { type: integer, description: 'Likes on the user''s games + comments' }
+        gamesCount: { type: integer, description: 'Published games' }
+        ratingAvg: { type: number, nullable: true, description: 'Average rating of all reviews received on the user''s games (null when none)' }
+        ratingCount: { type: integer }
+        karma: { type: integer }
+    UserProfile:
+      allOf:
+        - { $ref: '#/components/schemas/UserSummary' }
+        - type: object
+          properties:
+            bio: { type: string }
+            links: { type: array, items: { $ref: '#/components/schemas/Link' } }
+            createdAt: { type: string, format: date-time }
+            stats: { $ref: '#/components/schemas/UserStats' }
+    UserCard:
+      allOf:
+        - { $ref: '#/components/schemas/UserSummary' }
+        - type: object
+          properties:
+            stats: { $ref: '#/components/schemas/UserStats' }
+    Me:
+      allOf:
+        - { $ref: '#/components/schemas/UserSummary' }
+        - type: object
+          properties:
+            email: { type: string }
+            role: { type: string, enum: [user, admin] }
+            karma: { type: integer }
+    Media:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [build, screenshot, video, cover, avatar] }
+        status: { type: string, enum: [uploading, scanning, processing, ready, rejected], description: 'Non-owners only ever see `ready`' }
+        url: { type: string, nullable: true, description: 'Original / main file. null for builds.' }
+        variants:
+          type: object
+          description: Absolute URLs of generated variants (only the ones that exist)
+          properties:
+            thumb: { type: string }
+            card: { type: string }
+            full: { type: string }
+            poster: { type: string }
+            mp4: { type: string }
+        originalName: { type: string }
+        sizeBytes: { type: integer, format: int64 }
+        sortOrder: { type: integer }
+    GameSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        title: { type: string }
+        shortDescription: { type: string }
+        tags: { type: array, items: { type: string } }
+        platforms: { type: array, items: { type: string, enum: [windows, mac, linux, web, android] } }
+        coverUrl: { type: string, nullable: true, description: '640px card variant when available' }
+        owner: { $ref: '#/components/schemas/UserSummary' }
+        status: { type: string, enum: [draft, published, unpublished, removed] }
+        likesCount: { type: integer }
+        downloadsCount: { type: integer }
+        commentsCount: { type: integer }
+        reviewsCount: { type: integer }
+        ratingAvg: { type: number, nullable: true }
+        publishedAt: { type: string, format: date-time, nullable: true }
+        likedByMe: { type: boolean }
+    Game:
+      allOf:
+        - { $ref: '#/components/schemas/GameSummary' }
+        - type: object
+          properties:
+            description: { type: string, description: Markdown }
+            version: { type: string }
+            cover: { allOf: [{ $ref: '#/components/schemas/Media' }], type: object, nullable: true }
+            screenshots: { type: array, items: { $ref: '#/components/schemas/Media' } }
+            video: { allOf: [{ $ref: '#/components/schemas/Media' }], type: object, nullable: true }
+            builds: { type: array, items: { $ref: '#/components/schemas/Media' } }
+            myReview: { allOf: [{ $ref: '#/components/schemas/Review' }], type: object, nullable: true }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+    GameInput:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, minLength: 3, maxLength: 80 }
+        shortDescription: { type: string, maxLength: 160 }
+        description: { type: string, maxLength: 10000 }
+        tags: { type: array, maxItems: 8, items: { type: string, minLength: 2, maxLength: 24 } }
+        platforms: { type: array, items: { type: string, enum: [windows, mac, linux, web, android] } }
+        version: { type: string, maxLength: 20 }
+    GameInputPartial:
+      type: object
+      properties:
+        title: { type: string, minLength: 3, maxLength: 80 }
+        shortDescription: { type: string, maxLength: 160 }
+        description: { type: string, maxLength: 10000 }
+        tags: { type: array, maxItems: 8, items: { type: string } }
+        platforms: { type: array, items: { type: string } }
+        version: { type: string, maxLength: 20 }
+    GamePage:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/GameSummary' } }
+        nextCursor: { type: string, nullable: true }
+    Review:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        gameId: { type: string, format: uuid }
+        user: { $ref: '#/components/schemas/UserSummary' }
+        rating: { type: integer, minimum: 1, maximum: 5 }
+        body: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ReviewWithGame:
+      allOf:
+        - { $ref: '#/components/schemas/Review' }
+        - type: object
+          properties:
+            game: { type: object, properties: { id: { type: string }, slug: { type: string }, title: { type: string }, coverUrl: { type: string, nullable: true } } }
+    RatingSummary:
+      type: object
+      properties:
+        ratingAvg: { type: number, nullable: true }
+        ratingCount: { type: integer }
+        distribution:
+          type: object
+          description: 'Number of reviews per star: keys "1".."5"'
+          additionalProperties: { type: integer }
+    Comment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        gameId: { type: string, format: uuid }
+        parentId: { type: string, format: uuid, nullable: true }
+        kind: { type: string, enum: [comment, suggestion] }
+        body: { type: string, nullable: true, description: 'null when deleted' }
+        deleted: { type: boolean }
+        user: { allOf: [{ $ref: '#/components/schemas/UserSummary' }], type: object, nullable: true, description: 'null when deleted' }
+        acceptedAt: { type: string, format: date-time, nullable: true }
+        likesCount: { type: integer }
+        likedByMe: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        replies: { type: array, items: { $ref: '#/components/schemas/Comment' }, description: 'Only on top-level comments' }
+        repliesCount: { type: integer }
+    FeedItem:
+      type: object
+      properties:
+        badge: { type: string, enum: [fresh, sweetest, buzzing], nullable: true }
+        game: { $ref: '#/components/schemas/GameSummary' }
+    FeedPage:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/FeedItem' } }
+        nextCursor: { type: string, nullable: true }
+    LeaderboardEntry:
+      type: object
+      properties:
+        rank: { type: integer }
+        score: { type: number, description: 'games: engagement in period; creators: likes received in period; karma: karma earned in period' }
+        game: { $ref: '#/components/schemas/GameSummary' }
+        user: { $ref: '#/components/schemas/UserCard' }
+    ActivityItem:
+      type: object
+      properties:
+        type: { type: string, enum: [comment, suggestion, review, like, published] }
+        createdAt: { type: string, format: date-time }
+        excerpt: { type: string, nullable: true }
+        rating: { type: integer, nullable: true }
+        game: { type: object, properties: { id: { type: string }, slug: { type: string }, title: { type: string } } }
