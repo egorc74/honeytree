@@ -30,6 +30,7 @@ for (const scheme of ["light", "dark"] as const) {
 
 test("everything is reachable by keyboard: skip link, tabs and the login dialog trap focus", async ({ page }) => {
   await page.goto("/");
+  await expect(page.locator("#main")).toBeVisible(); // the mock worker gate has finished mounting the app
   await page.keyboard.press("Tab");
   await expect(page.getByRole("link", { name: "Skip to content" })).toBeFocused();
   await page.keyboard.press("Enter");

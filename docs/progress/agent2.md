@@ -42,6 +42,7 @@ optimistic likes/counters across all cached lists, karma toasts driven by `karma
 - Playwright: golden path (sign up → upload → publish → another user downloads, likes, reviews, comments and
   suggests → creator accepts → profile stats and leaderboards), EICAR rejection, search, auth modal, a11y,
   responsive.
+- **Test status:** 48 Vitest tests and 38 Playwright tests (desktop + mobile, against mocks) pass.
 - **Not done / needs the others:** running the same Playwright specs against the real stack
   (`E2E_API=real`) requires Agent 1's API and Agent 3's compose file (Phase 5). Contract points to confirm are in
   `docs/requests/agent2-to-agent1-contract-notes.md`; storage CORS and CSP in

@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "@honeytree/ui-tokens/theme.css";
 import "./globals.css";
 import { BottomTabBar } from "@/components/Nav";
+import { SkipLink } from "@/components/SkipLink";
 import { Providers } from "@/components/Providers";
 import { themeInitScript } from "@/components/ThemeToggle";
 import { TopBar } from "@/components/TopBar";
@@ -30,12 +31,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
       <body>
-        <a
-          href="#main"
-          className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-pill focus:bg-primary focus:px-4 focus:py-2 focus:font-heading focus:text-primary-fg"
-        >
-          Skip to content
-        </a>
+        <SkipLink />
         <Providers>
           <TopBar />
           <main id="main" tabIndex={-1} className="mx-auto max-w-7xl px-4 pb-28 pt-6 focus:outline-none md:pb-12">
