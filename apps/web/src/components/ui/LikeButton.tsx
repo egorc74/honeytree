@@ -67,7 +67,7 @@ export function LikeButton({
       )}
     >
       <span className={cx("inline-flex", buzz && "animate-buzz")}>
-        <BeeIcon size={icon} filled={liked} />
+        <BeeIcon size={icon} filled={liked} className="text-inherit" />
       </span>
       <span className="tabular-nums" aria-hidden>
         {compactNumber(count)}

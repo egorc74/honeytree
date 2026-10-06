@@ -21,8 +21,8 @@ export function VideoPlayer({ video, title }: { video: Media; title: string }) {
           <source src={src} type="video/mp4" />
         </video>
       ) : (
-        // eslint-disable-next-line @next/next/no-img-element
         <div className="relative aspect-video">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
           {video.variants.poster && <img src={video.variants.poster} alt={`${title} trailer poster`} className="h-full w-full object-cover" />}
           <p className="absolute inset-x-0 bottom-0 bg-bark-900 p-2 text-center text-sm text-comb-50">The trailer could not be loaded.</p>
         </div>

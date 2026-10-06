@@ -29,6 +29,7 @@ export function Reviews({ game }: { game: GameDetail }) {
   useEffect(() => {
     setRating(mine?.rating ?? 0);
     setBody(mine?.body ?? "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-sync only when the review itself changes
   }, [mine?.id, mine?.updatedAt]);
 
   const list = useInfiniteQuery({

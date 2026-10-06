@@ -24,8 +24,10 @@ export function SearchResults() {
 
   function update(next: { type?: Tab; tags?: string[] }) {
     const p = new URLSearchParams(params.toString());
-    if (next.type) next.type === "users" ? p.set("type", "users") : p.delete("type");
-    if (next.tags) next.tags.length ? p.set("tags", next.tags.join(",")) : p.delete("tags");
+    if (next.type === "users") p.set("type", "users");
+    else if (next.type) p.delete("type");
+    if (next.tags?.length) p.set("tags", next.tags.join(","));
+    else if (next.tags) p.delete("tags");
     router.replace(`${pathname}?${p.toString()}`);
   }
 

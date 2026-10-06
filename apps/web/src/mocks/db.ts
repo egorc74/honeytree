@@ -119,7 +119,7 @@ export interface DbState {
   sessionUserId: string | null;
 }
 
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 const STORAGE_KEY = "honeytree-mock-db";
 const DAY = 86_400_000;
 
@@ -215,14 +215,14 @@ function seedState(): DbState {
   });
 
   for (let i = 0; i < 40; i++) {
-    const title = `${ADJ[i % ADJ.length]} ${NOUN[(i * 7 + 3) % NOUN.length]}`;
+    const title = `${ADJ[i % ADJ.length]} ${NOUN[(i * 7 + 3 + Math.floor(i / 20) * 5) % NOUN.length]}`;
     const owner = s.users[1 + (i % (s.users.length - 1))];
     const ageDays = i < 8 ? rand() * 12 : 10 + rand() * 80;
     const created = now - ageDays * DAY;
     const id = `g_${i + 1}`;
     const tags = [...new Set([pick(TAGS), pick(TAGS), pick(TAGS)])];
     const g: DbGame = {
-      id, slug: slugify(title) + (i >= 20 ? `-${i}` : ""), ownerId: owner.id, title,
+      id, slug: slugify(title), ownerId: owner.id, title,
       shortDescription: `A ${tags[0]} game about ${NOUN[(i * 5) % NOUN.length].toLowerCase()}s, ${ADJ[(i * 3) % ADJ.length].toLowerCase()} secrets and a very determined bee.`,
       description: `# ${title}\n\n${title} is a **${tags[0]}** game made in ${Math.ceil(rand() * 9)} weeks.\n\n## Features\n\n- Hand-crafted levels\n- A cozy, *buzzing* soundtrack\n- Plays well with keyboard and controller\n\nFound a bug? Tell me in the comments. Read more at [my site](https://example.com).\n\n> Thanks for playing!`,
       tags, platforms: (["windows", "mac", "linux", "web", "android"] as Platform[]).filter(() => rand() > 0.5).concat("windows").filter((p, k, a) => a.indexOf(p) === k),

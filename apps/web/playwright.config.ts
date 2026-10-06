@@ -17,8 +17,8 @@ export default defineConfig({
   reporter: process.env.CI ? [["github"], ["html", { open: "never" }]] : "list",
   use: { baseURL, trace: "retain-on-failure", screenshot: "only-on-failure" },
   projects: [
-    { name: "desktop", use: { ...devices["Desktop Chrome"] } },
-    { name: "mobile", use: { ...devices["Pixel 7"] }, testMatch: /responsive\.spec\.ts/ },
+    { name: "desktop", use: { ...devices["Desktop Chrome"] }, testIgnore: /responsive\.spec\.ts/ },
+    { name: "mobile", use: { ...devices["Pixel 7"] }, testMatch: /(responsive|theme)\.spec\.ts/ },
   ],
   webServer: process.env.E2E_BASE_URL
     ? undefined

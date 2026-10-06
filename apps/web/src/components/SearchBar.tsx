@@ -82,6 +82,8 @@ function SearchBarInner({ className }: { className?: string }) {
       e.preventDefault();
       setActive((i) => (options.length ? (i <= 0 ? options.length - 1 : i - 1) : -1));
     } else if (e.key === "Escape") {
+      // type="search" clears itself on Escape in Chromium; keep the text and just close the list.
+      e.preventDefault();
       setOpen(false);
       setActive(-1);
     } else if (e.key === "Enter") {

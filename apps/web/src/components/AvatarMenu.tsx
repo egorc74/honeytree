@@ -58,20 +58,21 @@ export function AvatarMenu() {
   const itemClass = "block w-full px-4 py-2 text-left hover:bg-primary hover:text-primary-fg focus-visible:bg-primary focus-visible:text-primary-fg";
 
   return (
-    <div ref={wrap} className="relative" onKeyDown={onKey}>
+    <div ref={wrap} className="relative">
       <button
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={`Account menu for ${me.displayName}`}
         onClick={() => setOpen((o) => !o)}
+        onKeyDown={(e) => open && onKey(e)}
         className="rounded-full p-0.5"
         data-testid="avatar-menu"
       >
         <HexAvatar src={me.avatarUrl} name={me.displayName} size="sm" />
       </button>
       {open && (
-        <div role="menu" aria-label="Account" className="absolute right-0 top-12 z-40 w-52 overflow-hidden rounded-lg border-2 border-line bg-bg py-1 text-fg shadow-comb">
+        <div role="menu" aria-label="Account" tabIndex={-1} onKeyDown={onKey} className="absolute right-0 top-12 z-40 w-52 overflow-hidden rounded-lg border-2 border-line bg-bg py-1 text-fg shadow-comb">
           <div className="border-b border-line px-4 py-2">
             <p className="truncate font-heading font-semibold">{me.displayName}</p>
             <p className="truncate text-sm text-muted">@{me.username}</p>

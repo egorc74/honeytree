@@ -243,7 +243,7 @@ function CommentItem({ comment, game, isReply = false }: { comment: Comment; gam
 
         {replying && (
           <form onSubmit={reply.submit} className="mt-2 space-y-2" aria-label={`Reply to ${author?.displayName ?? "comment"}`}>
-            <TextArea label="Your reply" value={reply.body} onChange={(e) => reply.setBody(e.target.value)} maxLength={2000} error={reply.error} autoFocus />
+            <TextArea label="Your reply" value={reply.body} onChange={(e) => reply.setBody(e.target.value)} maxLength={2000} error={reply.error} focusOnMount />
             <div className="flex gap-2">
               <Button type="submit" size="sm" loading={reply.pending}>
                 Reply

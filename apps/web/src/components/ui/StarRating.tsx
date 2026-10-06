@@ -93,7 +93,7 @@ export function StarRatingInput({
   }
 
   return (
-    <div role="radiogroup" aria-label={label} className="inline-flex gap-0.5" onMouseLeave={() => setHover(0)}>
+    <div role="radiogroup" aria-label={label} className="inline-flex gap-0.5">
       {[1, 2, 3, 4, 5].map((i) => (
         <button
           key={i}
@@ -108,6 +108,7 @@ export function StarRatingInput({
           onClick={() => onChange(i)}
           onKeyDown={(e) => onKey(e, i)}
           onMouseEnter={() => setHover(i)}
+          onMouseLeave={() => setHover(0)}
           className="rounded-md p-0.5 transition-transform hover:scale-110"
         >
           <Star size={size} fill={i <= shown ? 1 : 0} />

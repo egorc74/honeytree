@@ -1,4 +1,6 @@
-import { useId, type InputHTMLAttributes, type ReactNode, type TextareaHTMLAttributes } from "react";
+"use client";
+
+import { useEffect, useId, useRef, type InputHTMLAttributes, type ReactNode, type TextareaHTMLAttributes } from "react";
 import { cx } from "./cx";
 
 const inputClasses =
@@ -44,9 +46,15 @@ export function TextArea({
   hint,
   className,
   counter,
+  focusOnMount,
   ...rest
-}: { label: string; error?: string | null; hint?: string; counter?: ReactNode } & TextareaHTMLAttributes<HTMLTextAreaElement>) {
+}: { label: string; error?: string | null; hint?: string; counter?: ReactNode; focusOnMount?: boolean } & TextareaHTMLAttributes<HTMLTextAreaElement>) {
   const id = useId();
+  const ref = useRef<HTMLTextAreaElement>(null);
+  // Used when the user just asked for the field (e.g. clicked "Reply"); not a page-load autofocus.
+  useEffect(() => {
+    if (focusOnMount) ref.current?.focus();
+  }, [focusOnMount]);
   return (
     <div className={className}>
       <div className="mb-1 flex items-baseline justify-between">
@@ -56,6 +64,7 @@ export function TextArea({
         {counter && <span className="text-xs text-muted">{counter}</span>}
       </div>
       <textarea
+        ref={ref}
         id={id}
         className={cx(inputClasses, "min-h-24 resize-y")}
         aria-invalid={!!error}

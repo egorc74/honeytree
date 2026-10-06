@@ -30,8 +30,10 @@ export function BuzzingCarousel({ games }: { games: Game[] }) {
         data-testid="buzzing-carousel"
       >
         {games.map((g, i) => (
-          <li key={g.id} className="w-[78%] shrink-0 snap-start sm:w-[44%] lg:w-[31%]" role="group" aria-roledescription="slide" aria-label={`${i + 1} of ${games.length}`}>
-            <GameCard game={{ ...g, badge: "buzzing" }} priority={i < 3} />
+          <li key={g.id} className="w-[78%] shrink-0 snap-start sm:w-[44%] lg:w-[31%]">
+            <div role="group" aria-roledescription="slide" aria-label={`${i + 1} of ${games.length}`} className="h-full">
+              <GameCard game={{ ...g, badge: "buzzing" }} priority={i < 3} className="h-full" />
+            </div>
           </li>
         ))}
       </ul>
