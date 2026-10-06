@@ -1,0 +1,61 @@
+@import "@fontsource-variable/fredoka";
+@import "@fontsource-variable/inter";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    background: var(--ht-bg);
+    color: var(--ht-fg);
+    font-family: theme("fontFamily.body");
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    min-height: 100vh;
+    background: var(--ht-bg);
+    color: var(--ht-fg);
+    line-height: 1.55;
+  }
+  h1, h2, h3, h4 {
+    font-family: theme("fontFamily.heading");
+    line-height: 1.2;
+  }
+  a {
+    color: inherit;
+  }
+  /* One consistent, high-contrast focus ring (WCAG 2.4.7). */
+  :focus-visible {
+    outline: 3px solid var(--ht-ring);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  /* The top bar is always dark, so use a light ring there. */
+  header :focus-visible,
+  nav[aria-label="Main (mobile)"] :focus-visible {
+    outline-color: #FFD45C;
+  }
+  [hidden] {
+    display: none !important;
+  }
+  ::selection {
+    background: #FFD45C;
+    color: #3B2414;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
