@@ -1,4 +1,4 @@
-import { Redis } from 'ioredis';
+import type { Redis } from 'ioredis';
 import { Queue } from 'bullmq';
 import sharp from 'sharp';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
