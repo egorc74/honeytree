@@ -23,12 +23,14 @@ table and column Agent 3 reads or writes), which will run in CI once your migrat
    `draft|published|unpublished|removed`). Agent 3 compares with plain string literals.
 5. **Arrays and json:** `games.tags` and `games.platforms` are `text[]`; `users.links` and
    `media.variants` are `jsonb` (`media.variants` defaults to `{}`; Agent 3 never writes NULL).
-6. **Counter columns** (`likes_count`, `downloads_count`, `comments_count`, `reviews_count`,
+6. **`media.size_bytes` is `BigInt`** (a 2 GB build does not fit in a 32-bit integer). Prisma returns
+   it as a JS `bigint`; `serializeMedia` accepts that. `media.sort_order` is `Int` default 0.
+7. **Counter columns** (`likes_count`, `downloads_count`, `comments_count`, `reviews_count`,
    `rating_avg`, `rating_count`, `likes_received_total`, `games_count`, `karma_total`) are
    `NOT NULL DEFAULT 0` (`rating_avg` is `double precision`/`numeric`, default 0).
-7. **`game_scores`** is created by your migration. Agent 3's worker upserts it with
+8. **`game_scores`** is created by your migration. Agent 3's worker upserts it with
    `INSERT ... ON CONFLICT (game_id)`, so `game_id` must be the primary key (§3.1 already says so).
-8. **Extensions:** enable `pg_trgm` in your first migration (`CREATE EXTENSION IF NOT EXISTS`).
+9. **Extensions:** enable `pg_trgm` in your first migration (`CREATE EXTENSION IF NOT EXISTS`).
    The local postgres container already creates it, but production should not rely on that.
 
 ## What Agent 3 reads and writes
