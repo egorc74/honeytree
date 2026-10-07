@@ -21,8 +21,9 @@ info:
     - **Text** (`body`, `description`, …) is plain Markdown. The API strips raw HTML on input; the web app must render
       Markdown with HTML disabled.
     - **Media URLs** are absolute and public. Build files have `url: null`; use `GET /games/{id}/download` (Agent 3).
-    - **Cover / avatar** are set after the upload is `ready` via `PATCH /games/{id}` `{coverMediaId}` and
-      `PATCH /users/me` `{avatarMediaId}`.
+    - **Cover / avatar**: the media pipeline sets `games.cover_media_id` / `users.avatar_media_id` itself when the upload
+      becomes `ready` (and deletes the previous one). `PATCH /games/{id}` `{coverMediaId}` and `PATCH /users/me`
+      `{avatarMediaId}` are still accepted, to pick another `ready` media of yours.
 
     ## Karma rules (implemented in the API)
     like game +1 · like comment +1 · comment +2 · suggestion +3 · review (body ≥ 20 chars) +3 ·
@@ -547,44 +548,79 @@ paths:
       parameters: [{ $ref: '#/components/parameters/Id' }]
       responses: { '200': { description: 'OK' } }
 
-  # ---------------------------------------------------------------- Agent 3 (documented here for completeness)
+  # ---------------------------------------------------------------- Media (Agent 3, apps/api/src/modules/media)
   /games/{id}/uploads:
     post:
       tags: [Media (Agent 3)]
-      summary: Start an upload (presigned)
-      description: Implemented by Agent 3 in `apps/api/src/modules/media`.
+      security: [{ cookieAuth: [] }]
+      summary: Start an upload for a game (presigned PUT)
+      description: |
+        Returns a presigned **PUT** URL (Cloudflare R2 has no presigned POST). The browser sends the raw file with
+        `method` + `headers` to `url`, then calls `POST /uploads/{id}/complete`. `uploadId` is the `media.id`.
+        Limits: build ≤ 2 GB (`.zip .exe .dmg .apk .AppImage .tar.gz .tgz`), video ≤ 300 MB (`.mp4 .mov .webm`),
+        image ≤ 10 MB (`.png .jpg .jpeg .webp .gif`). Per game: one cover and one video (a new one replaces the old),
+        up to 12 screenshots and 8 builds. Errors: `UNAUTHENTICATED`, `FORBIDDEN`, `GAME_NOT_FOUND`, `INVALID_UPLOAD`, `UPLOAD_LIMIT_REACHED`.
       parameters: [{ $ref: '#/components/parameters/Id' }]
-      responses: { '200': { description: 'OK' } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/UploadRequest' } } }
+      responses:
+        '201': { description: Ticket, content: { application/json: { schema: { $ref: '#/components/schemas/UploadTicket' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /users/me/uploads:
+    post:
+      tags: [Media (Agent 3)]
+      security: [{ cookieAuth: [] }]
+      summary: Start an avatar upload (presigned PUT)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/UploadRequest' } } }
+      responses:
+        '201': { description: Ticket, content: { application/json: { schema: { $ref: '#/components/schemas/UploadTicket' } } } }
   /uploads/{id}/complete:
     post:
-      summary: Finish an upload
       tags: [Media (Agent 3)]
+      security: [{ cookieAuth: [] }]
+      summary: Finish an upload (status becomes `scanning` or `processing`)
+      description: 'Errors: `UPLOAD_NOT_FOUND`, `UPLOAD_NOT_RECEIVED`, `UPLOAD_REJECTED`, `INVALID_STATE`.'
       parameters: [{ $ref: '#/components/parameters/Id' }]
-      responses: { '200': { description: 'OK' } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { media: { $ref: '#/components/schemas/Media' } } } } } }
   /uploads/{id}:
     get:
-      summary: Upload / processing status
       tags: [Media (Agent 3)]
+      security: [{ cookieAuth: [] }]
+      summary: Upload / processing status (poll until `ready` or `rejected`)
       parameters: [{ $ref: '#/components/parameters/Id' }]
-      responses: { '200': { description: 'OK' } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { media: { $ref: '#/components/schemas/Media' } } } } } }
   /media/{id}:
     delete:
-      summary: Delete a media file
       tags: [Media (Agent 3)]
+      security: [{ cookieAuth: [] }]
+      summary: Delete a media file
       parameters: [{ $ref: '#/components/parameters/Id' }]
-      responses: { '204': { description: 'Deleted' } }
+      responses: { '204': { description: Deleted } }
   /games/{id}/media/order:
     patch:
-      summary: Reorder screenshots
       tags: [Media (Agent 3)]
+      security: [{ cookieAuth: [] }]
+      summary: Reorder screenshots
       parameters: [{ $ref: '#/components/parameters/Id' }]
-      responses: { '200': { description: 'OK' } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [mediaIds], properties: { mediaIds: { type: array, maxItems: 50, items: { type: string, format: uuid } } } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/Media' } } } } } } }
   /games/{id}/download:
     get:
       tags: [Media (Agent 3)]
-      summary: Records the download and 302-redirects to a short-lived presigned URL
-      parameters: [{ $ref: '#/components/parameters/Id' }]
-      responses: { '302': { description: 'Redirect' } }
+      summary: Records the download and 302-redirects to a presigned URL (valid 5 minutes)
+      description: Anonymous downloads of published games are allowed. A user/IP is counted once per 24 h and never the game's owner. Errors `GAME_NOT_FOUND`, `BUILD_NOT_AVAILABLE`.
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+        - { name: mediaId, in: query, required: false, schema: { type: string, format: uuid }, description: A specific build }
+      responses: { '302': { description: Redirect } }
 
 components:
   securitySchemes:
@@ -690,6 +726,25 @@ components:
         originalName: { type: string }
         sizeBytes: { type: integer, format: int64 }
         sortOrder: { type: integer }
+        rejectReason: { type: string, nullable: true, description: 'Why a `rejected` upload was refused (bad type, malware, ...)' }
+    UploadRequest:
+      type: object
+      required: [kind, filename, size, mime]
+      properties:
+        kind: { type: string, enum: [build, screenshot, video, cover, avatar] }
+        filename: { type: string, maxLength: 255 }
+        size: { type: integer, minimum: 1 }
+        mime: { type: string }
+    UploadTicket:
+      type: object
+      properties:
+        uploadId: { type: string, format: uuid }
+        url: { type: string, description: Presigned URL to PUT the file to }
+        method: { type: string, enum: [PUT] }
+        headers: { type: object, additionalProperties: { type: string }, description: Send these headers with the PUT }
+        fields: { type: object, description: Always empty; kept for shape compatibility }
+        expiresAt: { type: string, format: date-time }
+        media: { $ref: '#/components/schemas/Media' }
     GameSummary:
       type: object
       properties:

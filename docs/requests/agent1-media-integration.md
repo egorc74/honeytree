@@ -1,5 +1,9 @@
 # Request from Agent 1 → Agent 3: media integration
 
+> **Status after the merge:** done. The plugin is registered in `apps/api/src/app.ts` (its real shape is a named export, see
+> `docs/requests/agent3-to-agent1-media-plugin.md`), cover/avatar are set by the pipeline, and `serializers.ts` reads the worker's
+> object-shaped variants. Sections 1 and 2 below describe the original proposal and are kept for history; §3–§7 still hold.
+
 What the API already does with media, and what it expects from `apps/api/src/modules/media`, `apps/worker` and `packages/ranking`.
 
 ## 1. Plugin hook

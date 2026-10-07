@@ -14,7 +14,11 @@ const schema = z.object({
   HOST: z.string().default('0.0.0.0'),
   WEB_ORIGINS: z.string().default('http://localhost:3000'),
   API_PUBLIC_URL: z.string().default('http://localhost:4000'),
-  MEDIA_PUBLIC_BASE_URL: z.string().default('http://localhost:9000/honeytree'),
+  // Same bucket URL the media plugin/worker use (S3_PUBLIC_BASE_URL); MEDIA_PUBLIC_BASE_URL overrides it for the API only.
+  MEDIA_PUBLIC_BASE_URL: z.string().optional(),
+  S3_PUBLIC_BASE_URL: z.string().optional(),
+  // `false` runs the API without uploads/downloads (no MinIO/Redis/S3 credentials needed).
+  MEDIA_ENABLED: bool.default(true),
   SESSION_TTL_DAYS: z.coerce.number().int().positive().default(30),
   RATE_LIMIT_ENABLED: bool.default(true),
   COOKIE_SECURE: bool.optional(),
@@ -34,9 +38,10 @@ export const config = {
   host: env.HOST,
   webOrigins: env.WEB_ORIGINS.split(',').map((s) => stripSlash(s.trim())).filter(Boolean),
   apiPublicUrl: stripSlash(env.API_PUBLIC_URL),
-  mediaPublicBaseUrl: stripSlash(env.MEDIA_PUBLIC_BASE_URL),
+  mediaPublicBaseUrl: stripSlash(env.MEDIA_PUBLIC_BASE_URL ?? env.S3_PUBLIC_BASE_URL ?? 'http://localhost:9000/honeytree-public'),
   sessionTtlMs: env.SESSION_TTL_DAYS * 24 * 60 * 60 * 1000,
   rateLimitEnabled: env.RATE_LIMIT_ENABLED,
+  mediaEnabled: env.MEDIA_ENABLED,
   cookieSecure: env.COOKIE_SECURE ?? env.NODE_ENV === 'production',
 };
 

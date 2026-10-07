@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { prisma, type Prisma } from '../db.ts';
 import { forbidden, invalid, notFound } from '../errors.ts';
 import { requireUser, type AuthUser } from '../http/auth.ts';
-import { gameSummaryInclude, toGameDetail, type GameRow } from '../http/serializers.ts';
+import { gameSummaryInclude, toGameDetail, variantKeys, type GameRow } from '../http/serializers.ts';
 import { slugify, stripHtml } from '../http/text.ts';
 import { isUuid, optionalText, parse, text, uuidParam } from '../http/validate.ts';
 import { FEED_SEQUENCE_KEY, getRedis, invalidate } from '../redis.ts';
@@ -178,10 +178,7 @@ export default async function gamesRoutes(app: FastifyInstance) {
     const game = await ownedGame(idOrSlug, user);
 
     const media = await prisma.media.findMany({ where: { gameId: game.id }, select: { storageKey: true, variants: true } });
-    const keys = media.flatMap((m) => [
-      m.storageKey,
-      ...Object.values((m.variants && typeof m.variants === 'object' ? m.variants : {}) as Record<string, string>),
-    ]);
+    const keys = media.flatMap((m) => [m.storageKey, ...variantKeys(m.variants)]);
 
     await prisma.$transaction(async (tx) => {
       // Comment authors lose the likes their comments on this game received.

@@ -11,6 +11,7 @@ export default defineConfig({
       NODE_ENV: 'test',
       DATABASE_URL: process.env.TEST_DATABASE_URL ?? 'postgresql://honeytree:honeytree@localhost:5432/honeytree_test',
       RATE_LIMIT_ENABLED: 'false',
+      MEDIA_ENABLED: 'false', // tests inject in-memory media fakes through buildApp({ media })
       REDIS_URL: '',
       WEB_ORIGINS: 'http://localhost:3000',
       API_PUBLIC_URL: 'http://localhost:4000',
