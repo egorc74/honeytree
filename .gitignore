@@ -1,19 +1,19 @@
 node_modules/
 dist/
-.env
-*.log
-apps/api/src/generated/
-dump.rdb
 .next/
 coverage/
 *.tsbuildinfo
 .turbo/
 
 # env files: only the example is committed
+.env
 .env.*
 !.env.example
 !.env.*.example
 
 # local data
 infra/.data/
+*.log
 .DS_Store
+dump.rdb
+apps/api/src/generated/
