@@ -1,0 +1,69 @@
+/*
+ * Honeytree theme variables. Light is the default; dark applies when
+ * <html data-theme="dark"> is set, or when the OS prefers dark and the user
+ * has not chosen explicitly (no data-theme="light").
+ * Keep in sync with `themes` in tokens.ts (a unit test checks this).
+ */
+:root {
+  --ht-bg: #FFF8E1;
+  --ht-surface: #FDEBB3;
+  --ht-surface-raised: #FFFFFF;
+  --ht-fg: #3B2414;
+  --ht-fg-muted: #6B4226;
+  --ht-border: #E2C77A;
+  --ht-primary: #F5B700;
+  --ht-primary-hover: #FFD45C;
+  --ht-on-primary: #3B2414;
+  --ht-link: #7A4F00;
+  --ht-badge: #D98E04;
+  --ht-on-badge: #3B2414;
+  --ht-success: #4A6623;
+  --ht-success-bg: #E4EDD3;
+  --ht-danger: #B23A1E;
+  --ht-danger-bg: #F8DDD6;
+  --ht-topbar: #3B2414;
+  --ht-on-topbar: #FFF8E1;
+  --ht-ring: #3B2414;
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --ht-bg: #2A190E;
+  --ht-surface: #3B2414;
+  --ht-surface-raised: #4D2F1B;
+  --ht-fg: #FFF8E1;
+  --ht-fg-muted: #E3CFA0;
+  --ht-border: #6B4226;
+  --ht-primary: #F5B700;
+  --ht-primary-hover: #FFD45C;
+  --ht-on-primary: #3B2414;
+  --ht-link: #FFD45C;
+  --ht-badge: #D98E04;
+  --ht-on-badge: #3B2414;
+  --ht-success: #A3C76B;
+  --ht-success-bg: #2E3A1B;
+  --ht-danger: #F2917A;
+  --ht-danger-bg: #4A1F14;
+  --ht-topbar: #3B2414;
+  --ht-on-topbar: #FFF8E1;
+  --ht-ring: #FFD45C;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ht-bg: #2A190E;
+    --ht-surface: #3B2414;
+    --ht-surface-raised: #4D2F1B;
+    --ht-fg: #FFF8E1;
+    --ht-fg-muted: #E3CFA0;
+    --ht-border: #6B4226;
+    --ht-link: #FFD45C;
+    --ht-success: #A3C76B;
+    --ht-success-bg: #2E3A1B;
+    --ht-danger: #F2917A;
+    --ht-danger-bg: #4A1F14;
+    --ht-ring: #FFD45C;
+    color-scheme: dark;
+  }
+}
