@@ -75,7 +75,7 @@ enum ReportStatus {
 }
 
 model User {
-  id                 String   @id @default(uuid(7)) @db.Uuid
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   username           String   @unique
   email              String   @unique
   passwordHash       String   @map("password_hash")
@@ -90,7 +90,7 @@ model User {
   gamesCount         Int      @default(0) @map("games_count")
   ratingAvg          Float?   @map("rating_avg")
   ratingCount        Int      @default(0) @map("rating_count")
-  createdAt          DateTime @default(now()) @map("created_at")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   sessions     Session[]
   games        Game[]
@@ -114,8 +114,8 @@ model Session {
   // sha256 of the cookie token; the raw token only ever lives in the cookie
   id        String   @id
   userId    String   @map("user_id") @db.Uuid
-  expiresAt DateTime @map("expires_at")
-  createdAt DateTime @default(now()) @map("created_at")
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -125,7 +125,7 @@ model Session {
 }
 
 model Game {
-  id               String     @id @default(uuid(7)) @db.Uuid
+  id               String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   ownerId          String     @map("owner_id") @db.Uuid
   slug             String     @unique
   title            String
@@ -142,9 +142,9 @@ model Game {
   commentsCount    Int        @default(0) @map("comments_count")
   reviewsCount     Int        @default(0) @map("reviews_count")
   ratingAvg        Float?     @map("rating_avg")
-  publishedAt      DateTime?  @map("published_at")
-  createdAt        DateTime   @default(now()) @map("created_at")
-  updatedAt        DateTime   @updatedAt @map("updated_at")
+  publishedAt      DateTime?  @map("published_at") @db.Timestamptz(3)
+  createdAt        DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
   // Maintained by a trigger (see the search migration); weights: title A, tags B, description C.
   searchVector     Unsupported("tsvector")? @map("search_vector")
 
@@ -166,7 +166,7 @@ model Game {
 }
 
 model Media {
-  id           String      @id @default(uuid(7)) @db.Uuid
+  id           String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   gameId       String?     @map("game_id") @db.Uuid
   ownerId      String      @map("owner_id") @db.Uuid
   kind         MediaKind
@@ -178,7 +178,7 @@ model Media {
   // { thumb, card, full, poster, mp4 } -> storage keys (written by the media worker)
   variants     Json        @default("{}")
   sortOrder    Int         @default(0) @map("sort_order")
-  createdAt    DateTime    @default(now()) @map("created_at")
+  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
 
   game  Game? @relation(fields: [gameId], references: [id], onDelete: Cascade)
   owner User  @relation(fields: [ownerId], references: [id], onDelete: Cascade)
@@ -192,7 +192,7 @@ model Media {
 model GameLike {
   userId    String   @map("user_id") @db.Uuid
   gameId    String   @map("game_id") @db.Uuid
-  createdAt DateTime @default(now()) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
@@ -203,13 +203,13 @@ model GameLike {
 }
 
 model Review {
-  id        String   @id @default(uuid(7)) @db.Uuid
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   gameId    String   @map("game_id") @db.Uuid
   userId    String   @map("user_id") @db.Uuid
   rating    Int
   body      String   @default("")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -221,17 +221,17 @@ model Review {
 }
 
 model Comment {
-  id         String      @id @default(uuid(7)) @db.Uuid
+  id         String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   gameId     String      @map("game_id") @db.Uuid
   userId     String      @map("user_id") @db.Uuid
   // One level of replies only: a reply's parent is always a top-level comment.
   parentId   String?     @map("parent_id") @db.Uuid
   kind       CommentKind @default(comment)
   body       String
-  acceptedAt DateTime?   @map("accepted_at")
+  acceptedAt DateTime?   @map("accepted_at") @db.Timestamptz(3)
   likesCount Int         @default(0) @map("likes_count")
-  deletedAt  DateTime?   @map("deleted_at")
-  createdAt  DateTime    @default(now()) @map("created_at")
+  deletedAt  DateTime?   @map("deleted_at") @db.Timestamptz(3)
+  createdAt  DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
 
   game    Game          @relation(fields: [gameId], references: [id], onDelete: Cascade)
   user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -247,7 +247,7 @@ model Comment {
 model CommentLike {
   userId    String   @map("user_id") @db.Uuid
   commentId String   @map("comment_id") @db.Uuid
-  createdAt DateTime @default(now()) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   comment Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
@@ -260,7 +260,7 @@ model CommentLike {
 // Append-only ledger: rows are never updated or deleted. Undoing an action inserts a
 // negative `reversal` row that points at the original through `reverses_id`.
 model KarmaEvent {
-  id         String      @id @default(uuid(7)) @db.Uuid
+  id         String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId     String      @map("user_id") @db.Uuid
   amount     Int
   reason     KarmaReason
@@ -268,7 +268,7 @@ model KarmaEvent {
   refId      String?     @map("ref_id") @db.Uuid
   // Set on reversal rows; unique so one event can be reversed at most once.
   reversesId String?     @unique @map("reverses_id") @db.Uuid
-  createdAt  DateTime    @default(now()) @map("created_at")
+  createdAt  DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -279,11 +279,11 @@ model KarmaEvent {
 }
 
 model Download {
-  id        String   @id @default(uuid(7)) @db.Uuid
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   gameId    String   @map("game_id") @db.Uuid
   userId    String?  @map("user_id") @db.Uuid
   ipHash    String   @map("ip_hash")
-  createdAt DateTime @default(now()) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   game Game  @relation(fields: [gameId], references: [id], onDelete: Cascade)
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
@@ -300,7 +300,7 @@ model GameScore {
   risingScore   Float    @default(0) @map("rising_score")
   engagement24h Float    @default(0) @map("engagement_24h")
   engagement7d  Float    @default(0) @map("engagement_7d")
-  computedAt    DateTime @default(now()) @map("computed_at")
+  computedAt    DateTime @default(now()) @map("computed_at") @db.Timestamptz(3)
 
   game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
 
@@ -311,13 +311,13 @@ model GameScore {
 }
 
 model Report {
-  id         String           @id @default(uuid(7)) @db.Uuid
+  id         String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   reporterId String           @map("reporter_id") @db.Uuid
   targetType ReportTargetType @map("target_type")
   targetId   String           @map("target_id") @db.Uuid
   reason     String
   status     ReportStatus     @default(open)
-  createdAt  DateTime         @default(now()) @map("created_at")
+  createdAt  DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
 
   reporter User @relation(fields: [reporterId], references: [id], onDelete: Cascade)
 

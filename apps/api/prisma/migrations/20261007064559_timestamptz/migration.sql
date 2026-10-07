@@ -1,0 +1,41 @@
+-- AlterTable
+ALTER TABLE "comment_likes" ALTER COLUMN "created_at" SET DATA TYPE TIMESTAMPTZ(3) USING "created_at" AT TIME ZONE 'UTC';
+
+-- AlterTable
+ALTER TABLE "comments" ALTER COLUMN "accepted_at" SET DATA TYPE TIMESTAMPTZ(3) USING "accepted_at" AT TIME ZONE 'UTC',
+ALTER COLUMN "deleted_at" SET DATA TYPE TIMESTAMPTZ(3) USING "deleted_at" AT TIME ZONE 'UTC',
+ALTER COLUMN "created_at" SET DATA TYPE TIMESTAMPTZ(3) USING "created_at" AT TIME ZONE 'UTC';
+
+-- AlterTable
+ALTER TABLE "downloads" ALTER COLUMN "created_at" SET DATA TYPE TIMESTAMPTZ(3) USING "created_at" AT TIME ZONE 'UTC';
+
+-- AlterTable
+ALTER TABLE "game_likes" ALTER COLUMN "created_at" SET DATA TYPE TIMESTAMPTZ(3) USING "created_at" AT TIME ZONE 'UTC';
+
+-- AlterTable
+ALTER TABLE "game_scores" ALTER COLUMN "computed_at" SET DATA TYPE TIMESTAMPTZ(3) USING "computed_at" AT TIME ZONE 'UTC';
+
+-- AlterTable
+ALTER TABLE "games" ALTER COLUMN "published_at" SET DATA TYPE TIMESTAMPTZ(3) USING "published_at" AT TIME ZONE 'UTC',
+ALTER COLUMN "created_at" SET DATA TYPE TIMESTAMPTZ(3) USING "created_at" AT TIME ZONE 'UTC',
+ALTER COLUMN "updated_at" SET DATA TYPE TIMESTAMPTZ(3) USING "updated_at" AT TIME ZONE 'UTC';
+
+-- AlterTable
+ALTER TABLE "karma_events" ALTER COLUMN "created_at" SET DATA TYPE TIMESTAMPTZ(3) USING "created_at" AT TIME ZONE 'UTC';
+
+-- AlterTable
+ALTER TABLE "media" ALTER COLUMN "created_at" SET DATA TYPE TIMESTAMPTZ(3) USING "created_at" AT TIME ZONE 'UTC';
+
+-- AlterTable
+ALTER TABLE "reports" ALTER COLUMN "created_at" SET DATA TYPE TIMESTAMPTZ(3) USING "created_at" AT TIME ZONE 'UTC';
+
+-- AlterTable
+ALTER TABLE "reviews" ALTER COLUMN "created_at" SET DATA TYPE TIMESTAMPTZ(3) USING "created_at" AT TIME ZONE 'UTC',
+ALTER COLUMN "updated_at" SET DATA TYPE TIMESTAMPTZ(3) USING "updated_at" AT TIME ZONE 'UTC';
+
+-- AlterTable
+ALTER TABLE "sessions" ALTER COLUMN "expires_at" SET DATA TYPE TIMESTAMPTZ(3) USING "expires_at" AT TIME ZONE 'UTC',
+ALTER COLUMN "created_at" SET DATA TYPE TIMESTAMPTZ(3) USING "created_at" AT TIME ZONE 'UTC';
+
+-- AlterTable
+ALTER TABLE "users" ALTER COLUMN "created_at" SET DATA TYPE TIMESTAMPTZ(3) USING "created_at" AT TIME ZONE 'UTC';

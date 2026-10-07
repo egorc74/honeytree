@@ -16,7 +16,25 @@ export function mediaUrl(key: string | null | undefined): string | null {
 }
 
 type Variants = Partial<Record<'thumb' | 'card' | 'full' | 'poster' | 'mp4', string>>;
-const asVariants = (v: unknown): Variants => (v && typeof v === 'object' ? (v as Variants) : {});
+
+/**
+ * `media.variants` is written by the media worker (Agent 3): each entry is `{ key, width, height, ... }`, next to a
+ * `rejectReason` string. Plain storage-key strings (seed data, older rows) are accepted too.
+ */
+const asStored = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' ? (v as Record<string, unknown>) : {});
+
+export function variantKey(v: unknown): string | undefined {
+  if (typeof v === 'string') return v;
+  const key = (v as { key?: unknown } | null)?.key;
+  return typeof key === 'string' ? key : undefined;
+}
+
+/** Storage keys of every stored variant (used to clean up files when a game is deleted). */
+export const variantKeys = (v: unknown): string[] =>
+  Object.entries(asStored(v))
+    .filter(([name]) => name !== 'rejectReason')
+    .map(([, value]) => variantKey(value))
+    .filter((k): k is string => !!k);
 
 /** Batch lookup: media id → URL of the preferred variant (falls back to the original file). */
 export async function mediaUrlMap(ids: (string | null | undefined)[], variant: 'thumb' | 'card') {
@@ -28,7 +46,7 @@ export async function mediaUrlMap(ids: (string | null | undefined)[], variant: '
     select: { id: true, storageKey: true, variants: true },
   });
   for (const m of rows) {
-    const url = mediaUrl(asVariants(m.variants)[variant] ?? m.storageKey);
+    const url = mediaUrl(variantKey(asStored(m.variants)[variant]) ?? m.storageKey);
     if (url) map.set(m.id, url);
   }
   return map;
@@ -105,10 +123,12 @@ type MediaRow = {
 };
 
 export function toMedia(m: MediaRow) {
+  const stored = asStored(m.variants);
   const variants: Variants = {};
-  for (const [k, v] of Object.entries(asVariants(m.variants))) {
-    const url = mediaUrl(v);
-    if (url) variants[k as keyof Variants] = url;
+  for (const [name, value] of Object.entries(stored)) {
+    if (name === 'rejectReason') continue; // not a file
+    const url = mediaUrl(variantKey(value));
+    if (url) variants[(name === 'mp4_720p' ? 'mp4' : name) as keyof Variants] = url; // the worker calls the 720p video `mp4_720p`
   }
   return {
     id: m.id,
@@ -120,6 +140,7 @@ export function toMedia(m: MediaRow) {
     originalName: m.originalName,
     sizeBytes: Number(m.sizeBytes),
     sortOrder: m.sortOrder,
+    rejectReason: typeof stored.rejectReason === 'string' ? stored.rejectReason : null,
   };
 }
 

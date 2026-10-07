@@ -1,11 +1,18 @@
+import { MemoryQueue, MemoryStorage } from '@honeytree/media/testing';
 import type { FastifyInstance } from 'fastify';
+import pg from 'pg';
 import { buildApp } from '../src/app.ts';
 import { prisma } from '../src/db.ts';
 
 export { prisma };
 
+/** In-memory object storage + job queue behind the real media plugin. */
+export const mediaFakes = { storage: new MemoryStorage(), queue: new MemoryQueue() };
+let mediaPool: pg.Pool | undefined;
+
 export async function makeApp(): Promise<FastifyInstance> {
-  const app = await buildApp();
+  mediaPool ??= new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 3 });
+  const app = await buildApp({ media: { db: mediaPool, ...mediaFakes } });
   await app.ready();
   return app;
 }

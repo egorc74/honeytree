@@ -1,4 +1,3 @@
-import { existsSync } from 'node:fs';
 import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
 import rateLimit from '@fastify/rate-limit';
@@ -8,6 +7,7 @@ import { config } from './config.ts';
 import { AppError } from './errors.ts';
 import { loadUser } from './http/auth.ts';
 import { getRedis } from './redis.ts';
+import { mediaPlugin, type MediaPluginOptions } from './modules/media/index.ts';
 import authRoutes from './modules/auth.ts';
 import commentsRoutes from './modules/comments.ts';
 import feedRoutes from './modules/feed.ts';
@@ -32,7 +32,15 @@ const CODE_BY_STATUS: Record<number, string> = {
   429: 'RATE_LIMITED',
 };
 
-export async function buildApp(): Promise<FastifyInstance> {
+export type AppOptions = {
+  /**
+   * Media plugin (uploads, downloads; Agent 3). `false` turns it off. Without options it builds its own Postgres pool,
+   * Redis connection and S3 client from the environment (`.env.example`); tests inject in-memory fakes.
+   */
+  media?: false | Partial<Omit<MediaPluginOptions, 'getUser'>>;
+};
+
+export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> {
   const app = Fastify({
     logger: config.isTest ? false : { level: config.isProd ? 'info' : 'debug' },
     trustProxy: config.isProd, // behind Caddy: use X-Forwarded-For for rate limiting
@@ -114,11 +122,13 @@ export async function buildApp(): Promise<FastifyInstance> {
       await api.register(searchRoutes);
       await api.register(moderationRoutes);
 
-      // Agent 3 owns src/modules/media (uploads, downloads). Registered when it exists; the API runs without it.
-      const entry = ['index.ts', 'index.js']
-        .map((f) => new URL(`./modules/media/${f}`, import.meta.url))
-        .find((u) => existsSync(u));
-      if (entry) await api.register((await import(entry.href)).default);
+      if (opts.media !== false && (opts.media || config.mediaEnabled)) {
+        await api.register(mediaPlugin, {
+          // The plugin never reads cookies itself: hand it our session lookup (filled by the global onRequest hook).
+          getUser: (req) => (req.user ? { id: req.user.id, role: req.user.role } : null),
+          ...opts.media,
+        });
+      }
     },
     { prefix: '/api/v1' },
   );

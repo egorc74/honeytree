@@ -5,8 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "start": "node dist/server.js",
-    "build": "tsc -p tsconfig.build.json",
+    "start": "tsx src/server.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "db:generate": "prisma generate",
@@ -31,13 +30,14 @@
     "ioredis": "^6.0.0",
     "pg": "8.23.1",
     "zod": "^4.6.5",
-    "zod-to-json-schema": "^3.25.2"
+    "zod-to-json-schema": "^3.25.2",
+    "@honeytree/media": "workspace:*",
+    "tsx": "^4.23.15"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",
     "@types/pg": "^8.23.1",
     "prisma": "7.10.0",
-    "tsx": "^4.23.15",
     "typescript": "^6.0.3",
     "vitest": "^5.0.3"
   },
