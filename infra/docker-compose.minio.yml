@@ -1,0 +1,49 @@
+# Self-hosted object storage (instead of Cloudflare R2). Use together with the prod file:
+#   docker compose --env-file .env.production -f infra/docker-compose.prod.yml -f infra/docker-compose.minio.yml up -d
+# Needs DNS records for MEDIA_DOMAIN and S3_DOMAIN; see infra/DEPLOY.md.
+services:
+  caddy:
+    volumes:
+      - ./caddy/minio.caddy:/etc/caddy/extra/minio.caddy:ro
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: ['server', '/data']
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_API_CORS_ALLOW_ORIGIN: https://${SITE_DOMAIN}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio: { condition: service_healthy }
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+      S3_BUCKET_PRIVATE: ${S3_BUCKET_PRIVATE}
+      S3_BUCKET_PUBLIC: ${S3_BUCKET_PUBLIC}
+    entrypoint: ['/bin/sh', '/minio-init.sh']
+    volumes:
+      - ./minio-init.sh:/minio-init.sh:ro
+    restart: 'no'
+
+  api:
+    depends_on:
+      minio-init: { condition: service_completed_successfully }
+  worker:
+    depends_on:
+      minio-init: { condition: service_completed_successfully }
+
+volumes:
+  minio-data:

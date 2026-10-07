@@ -1,0 +1,18 @@
+# Only used with infra/docker-compose.minio.yml (self-hosted storage instead of Cloudflare R2).
+# Public media files are served from the public bucket; presigned uploads and downloads
+# use the s3 host.
+{$MEDIA_DOMAIN} {
+	encode zstd gzip
+	@public path /honeytree-public/*
+	handle @public {
+		reverse_proxy minio:9000
+	}
+	respond 404
+}
+
+{$S3_DOMAIN} {
+	reverse_proxy minio:9000 {
+		header_up Host {host}
+		flush_interval -1
+	}
+}

@@ -1,0 +1,194 @@
+# Production stack for one VPS. Only Caddy publishes ports (80/443).
+#
+#   docker compose --env-file .env.production -f infra/docker-compose.prod.yml up -d
+#
+# Use infra/scripts/deploy.sh for real deployments. Storage is Cloudflare R2 by default;
+# add -f infra/docker-compose.minio.yml to self-host MinIO instead.
+name: honeytree
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '5'
+
+x-app: &app
+  restart: unless-stopped
+  logging: *logging
+  env_file: [../.env.production]
+  environment: &app-env
+    NODE_ENV: production
+    DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    REDIS_URL: redis://redis:6379
+    CLAMAV_HOST: clamav
+    CLAMAV_PORT: '3310'
+    SMTP_HOST: ${SMTP_HOST:-}
+  depends_on: &app-deps
+    postgres: { condition: service_healthy }
+    redis: { condition: service_healthy }
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    logging: *logging
+    ports: ['80:80', '443:443', '443:443/udp']
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+      MEDIA_DOMAIN: ${MEDIA_DOMAIN:-media.invalid}
+      S3_DOMAIN: ${S3_DOMAIN:-s3.invalid}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    logging: *logging
+    shm_size: 256mb
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    # Sized for an 8 GB host that also runs ClamAV and the apps.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=1GB
+      - -c
+      - effective_cache_size=3GB
+      - -c
+      - max_connections=100
+      - -c
+      - log_min_duration_statement=500
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    logging: *logging
+    # BullMQ needs noeviction: evicting a key would silently lose queued jobs.
+    command:
+      - redis-server
+      - --appendonly
+      - 'yes'
+      - --maxmemory
+      - 512mb
+      - --maxmemory-policy
+      - noeviction
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  clamav:
+    image: clamav/clamav:1.4
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      CLAMD_CONF_StreamMaxLength: 2100M
+      CLAMD_CONF_MaxFileSize: 2100M
+      CLAMD_CONF_MaxScanSize: 4000M
+      CLAMD_CONF_ReadTimeout: '600'
+    volumes:
+      - clamav-data:/var/lib/clamav
+    healthcheck:
+      test: ['CMD', '/usr/local/bin/clamdcheck.sh']
+      interval: 60s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+
+  api:
+    <<: *app
+    image: ${HONEYTREE_IMAGE_PREFIX:-honeytree}/api:${TAG:-latest}
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile
+      target: api
+    environment: *app-env
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:4000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  worker:
+    <<: *app
+    image: ${HONEYTREE_IMAGE_PREFIX:-honeytree}/worker:${TAG:-latest}
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile
+      target: worker
+    environment: *app-env
+    depends_on:
+      <<: *app-deps
+      clamav: { condition: service_started }
+    # Give running video encodes time to finish on `docker compose stop`.
+    stop_grace_period: 60s
+
+  web:
+    image: ${HONEYTREE_IMAGE_PREFIX:-honeytree}/web:${TAG:-latest}
+    restart: unless-stopped
+    logging: *logging
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile
+      target: web
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api/v1}
+        NEXT_PUBLIC_USE_MOCKS: 'false'
+    env_file: [../.env.production]
+    environment:
+      NODE_ENV: production
+    depends_on: [api]
+
+  backup:
+    build: ./backup
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      BACKUP_BUCKET: ${BACKUP_BUCKET:-}
+      BACKUP_S3_ENDPOINT: ${BACKUP_S3_ENDPOINT:-${S3_ENDPOINT:-}}
+      BACKUP_S3_ACCESS_KEY_ID: ${BACKUP_S3_ACCESS_KEY_ID:-${S3_ACCESS_KEY_ID:-}}
+      BACKUP_S3_SECRET_ACCESS_KEY: ${BACKUP_S3_SECRET_ACCESS_KEY:-${S3_SECRET_ACCESS_KEY:-}}
+      BACKUP_S3_REGION: ${BACKUP_S3_REGION:-auto}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  # Optional self-hosted uptime monitor: `--profile monitoring`, then browse to
+  # http://127.0.0.1:3001 through an SSH tunnel. An external monitor is better (see DEPLOY.md).
+  uptime-kuma:
+    profiles: [monitoring]
+    image: louislam/uptime-kuma:1
+    restart: unless-stopped
+    logging: *logging
+    ports: ['127.0.0.1:3001:3001']
+    volumes:
+      - uptime-kuma-data:/app/data
+
+volumes:
+  postgres-data:
+  redis-data:
+  clamav-data:
+  caddy-data:
+  caddy-config:
+  uptime-kuma-data:

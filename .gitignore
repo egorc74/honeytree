@@ -4,3 +4,16 @@ dist/
 *.log
 apps/api/src/generated/
 dump.rdb
+.next/
+coverage/
+*.tsbuildinfo
+.turbo/
+
+# env files: only the example is committed
+.env.*
+!.env.example
+!.env.*.example
+
+# local data
+infra/.data/
+.DS_Store
