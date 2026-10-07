@@ -1,0 +1,327 @@
+// Honeytree data model. Agent 1 is the only owner of this file and of the migrations.
+// Tables follow PLAN.md section 3.1.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  user
+  admin
+}
+
+enum GameStatus {
+  draft
+  published
+  unpublished
+  removed
+}
+
+enum Platform {
+  windows
+  mac
+  linux
+  web
+  android
+}
+
+enum MediaKind {
+  build
+  screenshot
+  video
+  cover
+  avatar
+}
+
+enum MediaStatus {
+  uploading
+  scanning
+  processing
+  ready
+  rejected
+}
+
+enum CommentKind {
+  comment
+  suggestion
+}
+
+enum KarmaReason {
+  like_game
+  like_comment
+  comment
+  suggestion
+  review
+  suggestion_accepted
+  reversal
+}
+
+enum ReportTargetType {
+  game
+  comment
+  review
+  user
+}
+
+enum ReportStatus {
+  open
+  resolved
+}
+
+model User {
+  id                 String   @id @default(uuid(7)) @db.Uuid
+  username           String   @unique
+  email              String   @unique
+  passwordHash       String   @map("password_hash")
+  displayName        String   @map("display_name")
+  // Plain column (no FK): media.owner_id already points at users, a second FK would be circular.
+  avatarMediaId      String?  @map("avatar_media_id") @db.Uuid
+  bio                String   @default("")
+  links              Json     @default("[]")
+  role               Role     @default(user)
+  karmaTotal         Int      @default(0) @map("karma_total")
+  likesReceivedTotal Int      @default(0) @map("likes_received_total")
+  gamesCount         Int      @default(0) @map("games_count")
+  ratingAvg          Float?   @map("rating_avg")
+  ratingCount        Int      @default(0) @map("rating_count")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  sessions     Session[]
+  games        Game[]
+  media        Media[]
+  gameLikes    GameLike[]
+  commentLikes CommentLike[]
+  reviews      Review[]
+  comments     Comment[]
+  karmaEvents  KarmaEvent[]
+  downloads    Download[]
+  reports      Report[]
+
+  @@index([karmaTotal(sort: Desc)])
+  @@index([likesReceivedTotal(sort: Desc)])
+  @@index([username(ops: raw("gin_trgm_ops"))], type: Gin, map: "users_username_trgm_idx")
+  @@index([displayName(ops: raw("gin_trgm_ops"))], type: Gin, map: "users_display_name_trgm_idx")
+  @@map("users")
+}
+
+model Session {
+  // sha256 of the cookie token; the raw token only ever lives in the cookie
+  id        String   @id
+  userId    String   @map("user_id") @db.Uuid
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model Game {
+  id               String     @id @default(uuid(7)) @db.Uuid
+  ownerId          String     @map("owner_id") @db.Uuid
+  slug             String     @unique
+  title            String
+  shortDescription String     @default("") @map("short_description")
+  description      String     @default("")
+  tags             String[]
+  platforms        Platform[]
+  version          String     @default("1.0.0")
+  status           GameStatus @default(draft)
+  // Plain column (no FK): set through PATCH /games/:id once the cover upload is ready.
+  coverMediaId     String?    @map("cover_media_id") @db.Uuid
+  likesCount       Int        @default(0) @map("likes_count")
+  downloadsCount   Int        @default(0) @map("downloads_count")
+  commentsCount    Int        @default(0) @map("comments_count")
+  reviewsCount     Int        @default(0) @map("reviews_count")
+  ratingAvg        Float?     @map("rating_avg")
+  publishedAt      DateTime?  @map("published_at")
+  createdAt        DateTime   @default(now()) @map("created_at")
+  updatedAt        DateTime   @updatedAt @map("updated_at")
+  // Maintained by a trigger (see the search migration); weights: title A, tags B, description C.
+  searchVector     Unsupported("tsvector")? @map("search_vector")
+
+  owner     User       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  media     Media[]
+  likes     GameLike[]
+  reviews   Review[]
+  comments  Comment[]
+  downloads Download[]
+  score     GameScore?
+
+  @@index([ownerId])
+  @@index([status, publishedAt(sort: Desc)])
+  @@index([tags], type: Gin)
+  // Created by the hand-written search migration; declared here so `migrate dev` does not drop them.
+  @@index([searchVector], type: Gin, map: "games_search_vector_idx")
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin, map: "games_title_trgm_idx")
+  @@map("games")
+}
+
+model Media {
+  id           String      @id @default(uuid(7)) @db.Uuid
+  gameId       String?     @map("game_id") @db.Uuid
+  ownerId      String      @map("owner_id") @db.Uuid
+  kind         MediaKind
+  storageKey   String      @map("storage_key")
+  originalName String      @map("original_name")
+  mime         String
+  sizeBytes    BigInt      @map("size_bytes")
+  status       MediaStatus @default(uploading)
+  // { thumb, card, full, poster, mp4 } -> storage keys (written by the media worker)
+  variants     Json        @default("{}")
+  sortOrder    Int         @default(0) @map("sort_order")
+  createdAt    DateTime    @default(now()) @map("created_at")
+
+  game  Game? @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  owner User  @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@index([gameId, kind, sortOrder])
+  @@index([ownerId])
+  @@index([status, createdAt])
+  @@map("media")
+}
+
+model GameLike {
+  userId    String   @map("user_id") @db.Uuid
+  gameId    String   @map("game_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@id([userId, gameId])
+  @@index([gameId, createdAt])
+  @@map("game_likes")
+}
+
+model Review {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  gameId    String   @map("game_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  rating    Int
+  body      String   @default("")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([gameId, userId])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([gameId, createdAt(sort: Desc)])
+  @@map("reviews")
+}
+
+model Comment {
+  id         String      @id @default(uuid(7)) @db.Uuid
+  gameId     String      @map("game_id") @db.Uuid
+  userId     String      @map("user_id") @db.Uuid
+  // One level of replies only: a reply's parent is always a top-level comment.
+  parentId   String?     @map("parent_id") @db.Uuid
+  kind       CommentKind @default(comment)
+  body       String
+  acceptedAt DateTime?   @map("accepted_at")
+  likesCount Int         @default(0) @map("likes_count")
+  deletedAt  DateTime?   @map("deleted_at")
+  createdAt  DateTime    @default(now()) @map("created_at")
+
+  game    Game          @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parent  Comment?      @relation("Replies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies Comment[]     @relation("Replies")
+  likes   CommentLike[]
+
+  @@index([gameId, parentId, createdAt])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("comments")
+}
+
+model CommentLike {
+  userId    String   @map("user_id") @db.Uuid
+  commentId String   @map("comment_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  comment Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  @@id([userId, commentId])
+  @@index([commentId, createdAt])
+  @@map("comment_likes")
+}
+
+// Append-only ledger: rows are never updated or deleted. Undoing an action inserts a
+// negative `reversal` row that points at the original through `reverses_id`.
+model KarmaEvent {
+  id         String      @id @default(uuid(7)) @db.Uuid
+  userId     String      @map("user_id") @db.Uuid
+  amount     Int
+  reason     KarmaReason
+  refType    String?     @map("ref_type")
+  refId      String?     @map("ref_id") @db.Uuid
+  // Set on reversal rows; unique so one event can be reversed at most once.
+  reversesId String?     @unique @map("reverses_id") @db.Uuid
+  createdAt  DateTime    @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([userId, reason, refType, refId])
+  @@index([createdAt])
+  @@map("karma_events")
+}
+
+model Download {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  gameId    String   @map("game_id") @db.Uuid
+  userId    String?  @map("user_id") @db.Uuid
+  ipHash    String   @map("ip_hash")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  game Game  @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([gameId, createdAt])
+  @@map("downloads")
+}
+
+// Written by the worker (Agent 3), read by the feed endpoints.
+model GameScore {
+  gameId        String   @id @map("game_id") @db.Uuid
+  freshScore    Float    @default(0) @map("fresh_score")
+  lovedScore    Float    @default(0) @map("loved_score")
+  risingScore   Float    @default(0) @map("rising_score")
+  engagement24h Float    @default(0) @map("engagement_24h")
+  engagement7d  Float    @default(0) @map("engagement_7d")
+  computedAt    DateTime @default(now()) @map("computed_at")
+
+  game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@index([risingScore(sort: Desc)])
+  @@index([lovedScore(sort: Desc)])
+  @@index([freshScore(sort: Desc)])
+  @@map("game_scores")
+}
+
+model Report {
+  id         String           @id @default(uuid(7)) @db.Uuid
+  reporterId String           @map("reporter_id") @db.Uuid
+  targetType ReportTargetType @map("target_type")
+  targetId   String           @map("target_id") @db.Uuid
+  reason     String
+  status     ReportStatus     @default(open)
+  createdAt  DateTime         @default(now()) @map("created_at")
+
+  reporter User @relation(fields: [reporterId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@index([targetType, targetId])
+  @@map("reports")
+}
